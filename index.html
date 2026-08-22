@@ -1,0 +1,2766 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#141923">
+<title>Markbench — lockout lock marking</title>
+<style>
+/* ============================================================
+   MARKBENCH — design tokens
+   Chrome: graphite instrument housing. Work surface: bright stock.
+   Signal orange = things that act on the world. Cyan = the cursor's world.
+   ============================================================ */
+:root{
+  --bg:#0C0F14;
+  --chrome:#141923;
+  --chrome-2:#1B2130;
+  --chrome-3:#232B3B;
+  --line:#2B3446;
+  --line-2:#3A465C;
+  --text:#DFE5EE;
+  --text-2:#8593A8;
+  --text-3:#5C6980;
+  --accent:#F26419;
+  --accent-dim:#7A3410;
+  --cyan:#2BC5D9;
+  --paper:#F7F6F2;
+  --paper-2:#E9E7E0;
+  --rule:#C3C0B6;
+  --danger:#E5484D;
+  --ok:#43C08A;
+  --amber:#E8B23A;
+
+  --cond:"Roboto Condensed","Arial Narrow","Helvetica Neue Condensed",system-ui,sans-serif;
+  --ui:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+
+  --r:4px;
+  --topbar:52px;
+  --statusbar:26px;
+  --navbar:58px;
+}
+
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;padding:0;height:100%;overflow:hidden}
+body{
+  background:var(--bg);color:var(--text);
+  font-family:var(--ui);font-size:14px;line-height:1.4;
+  -webkit-text-size-adjust:100%;
+  overscroll-behavior:none;
+}
+button,input,select,textarea{font-family:inherit;font-size:inherit;color:inherit}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--line);border-radius:9px}
+::-webkit-scrollbar-thumb:hover{background:var(--line-2)}
+
+/* ============================================================
+   SHELL
+   ============================================================ */
+#app{
+  position:fixed;inset:0;
+  display:grid;
+  grid-template-rows:var(--topbar) 1fr var(--statusbar);
+  grid-template-columns:1fr;
+}
+@media(min-width:1080px){
+  #app{grid-template-columns:252px 1fr 312px;
+       grid-template-areas:"top top top" "left stage right" "status status status"}
+  #topbar{grid-area:top}#leftrail{grid-area:left}#stagewrap{grid-area:stage}
+  #rightrail{grid-area:right}#statusbar{grid-area:status}
+}
+
+/* ---- topbar ---- */
+#topbar{
+  display:flex;align-items:center;gap:10px;
+  padding:0 12px;background:var(--chrome);
+  border-bottom:1px solid var(--line);
+  min-width:0;
+}
+.brand{display:flex;align-items:baseline;gap:8px;min-width:0}
+.brand .mk{
+  font-family:var(--cond);font-weight:700;font-size:17px;
+  letter-spacing:.15em;text-transform:uppercase;white-space:nowrap;
+}
+.brand .mk em{color:var(--accent);font-style:normal}
+.brand .doc{
+  font-size:12px;color:var(--text-3);white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis;max-width:24vw;
+}
+@media(max-width:520px){.brand .doc{display:none}}
+.grow{flex:1;min-width:0}
+
+/* ---- face tabs ---- */
+.facetabs{display:flex;gap:3px;min-width:0;flex-shrink:1;background:var(--chrome-2);padding:3px;border-radius:var(--r);
+  border:1px solid var(--line);overflow:auto;max-width:100%;scrollbar-width:none}
+.facetabs::-webkit-scrollbar{display:none}
+.facetab{
+  border:0;background:transparent;color:var(--text-2);
+  font-family:var(--cond);font-size:12px;letter-spacing:.09em;text-transform:uppercase;
+  padding:5px 11px;border-radius:2px;cursor:pointer;white-space:nowrap;
+}
+.facetab[aria-selected="true"]{background:var(--chrome-3);color:var(--text);box-shadow:inset 0 -2px 0 var(--accent)}
+.facetab.add{color:var(--text-3);padding:5px 9px}
+
+/* ---- rails ---- */
+.rail{
+  background:var(--chrome);overflow-y:auto;overflow-x:hidden;
+  display:flex;flex-direction:column;
+}
+#leftrail{border-right:1px solid var(--line)}
+#rightrail{border-left:1px solid var(--line)}
+@media(max-width:1079px){
+  .rail{
+    position:absolute;left:0;right:0;bottom:calc(var(--navbar) + env(safe-area-inset-bottom));
+    max-height:min(66dvh,560px);z-index:30;
+    border-top:1px solid var(--line);
+    border-radius:12px 12px 0 0;
+    box-shadow:0 -18px 44px rgba(0,0,0,.55);
+    transform:translateY(102%);
+    transition:transform .22s cubic-bezier(.3,.9,.3,1);
+    display:flex;
+  }
+  .rail.open{transform:translateY(0)}
+  .sheetgrip{
+    position:sticky;top:0;z-index:2;background:var(--chrome);
+    padding:8px 0 4px;display:flex;justify-content:center;flex:0 0 auto;
+  }
+  .sheetgrip i{display:block;width:40px;height:4px;border-radius:4px;background:var(--line-2)}
+}
+@media(min-width:1080px){ .sheetgrip{display:none} }
+
+/* ---- section blocks in rails ---- */
+.sec{border-bottom:1px solid var(--line)}
+.sec>h3{
+  margin:0;padding:9px 12px 7px;
+  font-family:var(--cond);font-size:11px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--text-3);font-weight:600;
+  display:flex;align-items:center;gap:8px;
+}
+.sec>h3 .tag{
+  margin-left:auto;font-family:var(--mono);font-size:10px;color:var(--text-3);
+  border:1px solid var(--line);border-radius:2px;padding:0 5px;
+}
+.sec .body{padding:0 12px 12px}
+
+/* ---- form controls ---- */
+.row{display:grid;gap:7px;margin-bottom:7px}
+.c2{grid-template-columns:1fr 1fr}
+.c3{grid-template-columns:1fr 1fr 1fr}
+.c4{grid-template-columns:1fr 1fr 1fr 1fr}
+label.fld{display:flex;flex-direction:column;gap:3px;min-width:0}
+label.fld>span{
+  font-family:var(--cond);font-size:10px;letter-spacing:.11em;text-transform:uppercase;
+  color:var(--text-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+input[type=text],input[type=number],select,textarea{
+  width:100%;min-width:0;padding:6px 8px;
+  background:var(--chrome-2);border:1px solid var(--line);border-radius:var(--r);
+  color:var(--text);
+}
+input[type=number]{font-family:var(--mono);font-size:13px}
+textarea{resize:vertical;font-size:13px;line-height:1.35}
+select{appearance:none;background-image:linear-gradient(45deg,transparent 50%,var(--text-3) 50%),linear-gradient(135deg,var(--text-3) 50%,transparent 50%);
+  background-position:calc(100% - 14px) 12px,calc(100% - 9px) 12px;background-size:5px 5px;background-repeat:no-repeat;padding-right:26px}
+input:focus-visible,select:focus-visible,textarea:focus-visible,button:focus-visible,[tabindex]:focus-visible{
+  outline:2px solid var(--cyan);outline-offset:1px}
+input[type=range]{width:100%;accent-color:var(--accent);background:transparent}
+input[type=color]{width:100%;height:30px;padding:2px;background:var(--chrome-2);border:1px solid var(--line);border-radius:var(--r)}
+
+.chk{display:flex;align-items:center;gap:7px;font-size:13px;color:var(--text-2);cursor:pointer;
+  padding:5px 0;user-select:none}
+.chk input{width:15px;height:15px;accent-color:var(--accent);margin:0}
+
+/* segmented control */
+.seg{display:flex;border:1px solid var(--line);border-radius:var(--r);overflow:hidden;background:var(--chrome-2)}
+.seg button{
+  flex:1;border:0;background:transparent;color:var(--text-3);
+  padding:6px 4px;cursor:pointer;font-size:12px;
+  font-family:var(--cond);letter-spacing:.07em;text-transform:uppercase;
+  border-right:1px solid var(--line);white-space:nowrap;
+}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--chrome-3);color:var(--text)}
+.seg.hot button[aria-pressed="true"]{background:var(--accent);color:#160800;font-weight:700}
+
+/* buttons */
+.btn{
+  display:inline-flex;align-items:center;justify-content:center;gap:6px;
+  border:1px solid var(--line);background:var(--chrome-2);color:var(--text);
+  padding:7px 11px;border-radius:var(--r);cursor:pointer;white-space:nowrap;
+  font-size:13px;
+}
+.btn:hover{background:var(--chrome-3);border-color:var(--line-2)}
+.btn:active{transform:translateY(1px)}
+.btn.pri{background:var(--accent);border-color:var(--accent);color:#170700;font-weight:600}
+.btn.pri:hover{background:#FF7628}
+.btn.ghost{background:transparent}
+.btn.sm{padding:5px 8px;font-size:12px}
+.btn.wide{width:100%}
+.btn.dngr{color:var(--danger);border-color:#4A2226}
+.btn.dngr:hover{background:#2A171A}
+.btnrow{display:flex;gap:6px;flex-wrap:wrap}
+.btnrow.split>*{flex:1}
+
+/* 9-point anchor picker */
+.anchor9{
+  display:grid;grid-template-columns:repeat(3,1fr);gap:2px;
+  width:74px;padding:3px;background:var(--chrome-2);border:1px solid var(--line);border-radius:var(--r);
+}
+.anchor9 button{
+  aspect-ratio:1;border:0;border-radius:2px;background:var(--chrome-3);cursor:pointer;
+  position:relative;padding:0;
+}
+.anchor9 button::after{content:"";position:absolute;inset:38%;border-radius:50%;background:var(--text-3)}
+.anchor9 button[aria-pressed="true"]{background:var(--accent)}
+.anchor9 button[aria-pressed="true"]::after{background:#170700}
+
+/* ---- element palette ---- */
+.palette{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.palette .btn{flex-direction:column;gap:4px;padding:10px 6px;font-size:11px;
+  font-family:var(--cond);letter-spacing:.08em;text-transform:uppercase;color:var(--text-2)}
+.palette .btn svg{width:20px;height:20px;stroke:var(--accent);fill:none;stroke-width:1.6}
+
+/* ---- layers list ---- */
+.layers{display:flex;flex-direction:column;gap:3px}
+.layer{
+  display:flex;align-items:center;gap:7px;padding:6px 7px;
+  background:var(--chrome-2);border:1px solid transparent;border-radius:var(--r);
+  cursor:pointer;user-select:none;
+}
+.layer:hover{border-color:var(--line)}
+.layer[aria-selected="true"]{border-color:var(--cyan);background:var(--chrome-3)}
+.layer .ic{width:15px;height:15px;flex:0 0 auto;stroke:var(--text-3);fill:none;stroke-width:1.7}
+.layer[aria-selected="true"] .ic{stroke:var(--cyan)}
+.layer .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}
+.layer .mini{
+  border:0;background:transparent;color:var(--text-3);cursor:pointer;padding:2px 3px;
+  font-family:var(--mono);font-size:11px;line-height:1;border-radius:2px;
+}
+.layer .mini:hover{color:var(--text);background:var(--chrome-3)}
+.layer .mini[data-off="1"]{color:var(--text-3);opacity:.4}
+
+/* ---- stage ---- */
+#stagewrap{
+  position:relative;overflow:hidden;background:
+    radial-gradient(ellipse at 50% 0%,#151B26 0%,var(--bg) 68%);
+  min-height:0;display:flex;flex-direction:column;
+}
+#stagetools{
+  position:absolute;top:8px;left:8px;right:8px;z-index:6;
+  display:flex;gap:6px;align-items:center;pointer-events:none;flex-wrap:wrap;
+}
+#stagetools>*{pointer-events:auto}
+.tbtn{
+  border:1px solid var(--line);background:rgba(20,25,35,.86);backdrop-filter:blur(6px);
+  color:var(--text-2);border-radius:var(--r);cursor:pointer;padding:5px 8px;
+  font-family:var(--cond);font-size:11px;letter-spacing:.09em;text-transform:uppercase;
+}
+.tbtn[aria-pressed="true"]{color:var(--accent);border-color:var(--accent-dim)}
+.tbtn:hover{color:var(--text)}
+#stage{flex:1;min-height:0;touch-action:none;user-select:none;display:block;width:100%}
+
+/* ---- status ---- */
+#statusbar{
+  display:flex;align-items:center;gap:12px;padding:0 12px;
+  background:var(--chrome);border-top:1px solid var(--line);
+  font-family:var(--mono);font-size:11px;color:var(--text-3);
+  overflow:hidden;white-space:nowrap;
+}
+#statusbar .warn{color:var(--amber)}
+#statusbar .bad{color:var(--danger)}
+#statusbar .good{color:var(--ok)}
+@media(max-width:1079px){#statusbar{padding-bottom:0}}
+
+/* ---- bottom nav (mobile) ---- */
+#nav{
+  display:none;
+  position:absolute;left:0;right:0;bottom:0;z-index:40;
+  height:calc(var(--navbar) + env(safe-area-inset-bottom));
+  padding-bottom:env(safe-area-inset-bottom);
+  background:var(--chrome);border-top:1px solid var(--line);
+}
+@media(max-width:1079px){
+  #nav{display:grid;grid-template-columns:repeat(5,1fr)}
+  #app{padding-bottom:calc(var(--navbar) + env(safe-area-inset-bottom))}
+  .brand .mk{font-size:15px;letter-spacing:.12em}
+  .tbtn{padding:5px 7px;font-size:10px}
+}
+#nav button{
+  border:0;background:transparent;color:var(--text-3);cursor:pointer;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
+  font-family:var(--cond);font-size:10px;letter-spacing:.08em;text-transform:uppercase;
+  padding:0;
+}
+#nav button svg{width:19px;height:19px;stroke:currentColor;fill:none;stroke-width:1.7}
+#nav button[aria-pressed="true"]{color:var(--accent)}
+
+/* ---- cloud chip ---- */
+.chip{
+  display:inline-flex;align-items:center;gap:6px;cursor:pointer;
+  border:1px solid var(--line);background:var(--chrome-2);color:var(--text-3);
+  font-family:var(--cond);font-size:11px;letter-spacing:.1em;text-transform:uppercase;
+  padding:5px 9px;border-radius:99px;white-space:nowrap;
+}
+.chip:hover{border-color:var(--line-2);color:var(--text-2)}
+.chip i{width:7px;height:7px;border-radius:50%;background:var(--text-3);flex:0 0 auto}
+.chip.on{color:var(--ok);border-color:#215240}
+.chip.on i{background:var(--ok);box-shadow:0 0 6px rgba(67,192,138,.7)}
+.chip.bad{color:var(--danger);border-color:#4A2226}
+.chip.bad i{background:var(--danger)}
+.chip.wait i{background:var(--amber)}
+@media(max-width:640px){ .chip{padding:5px 7px;font-size:10px} .chip span{display:none} }
+
+.seg.scrollx{overflow-x:auto;scrollbar-width:none}
+.seg.scrollx::-webkit-scrollbar{display:none}
+.seg.scrollx button{flex:0 0 auto;padding:6px 11px}
+
+/* ---- misc ---- */
+.hint{font-size:12px;color:var(--text-3);line-height:1.45;margin:8px 0 0}
+.divider{height:1px;background:var(--line);margin:10px 0}
+.pill{
+  display:inline-block;font-family:var(--mono);font-size:10px;
+  padding:1px 6px;border-radius:99px;border:1px solid var(--line);color:var(--text-3);
+}
+.pill.on{color:var(--ok);border-color:#215240}
+.empty{
+  text-align:center;color:var(--text-3);font-size:12px;padding:18px 8px;
+  border:1px dashed var(--line);border-radius:var(--r);
+}
+.thumb{
+  width:100%;height:78px;object-fit:contain;background:
+    repeating-conic-gradient(#2A3140 0% 25%,#222836 0% 50%) 50%/12px 12px;
+  border:1px solid var(--line);border-radius:var(--r);
+}
+.tokrow{display:flex;flex-wrap:wrap;gap:4px;margin-top:5px}
+.tok{
+  border:1px solid var(--line);background:var(--chrome-2);color:var(--cyan);
+  font-family:var(--mono);font-size:11px;padding:2px 6px;border-radius:99px;cursor:pointer;
+}
+.tok:hover{border-color:var(--cyan)}
+
+/* roster table */
+.roster{display:flex;flex-direction:column;gap:4px;max-height:240px;overflow:auto;padding-right:2px}
+.rrow{display:grid;grid-template-columns:20px 1fr 1fr 1fr 24px;gap:4px;align-items:center}
+.rrow .n{font-family:var(--mono);font-size:10px;color:var(--text-3);text-align:right}
+.rrow input{padding:4px 6px;font-size:12px}
+.rrow button{border:0;background:transparent;color:var(--text-3);cursor:pointer;font-size:13px;padding:2px}
+.rrow button:hover{color:var(--danger)}
+@media(max-width:1079px) and (min-width:521px){.rrow{grid-template-columns:20px 1fr 1fr 1fr 24px}}
+@media(max-width:520px){
+  .rrow{grid-template-columns:20px 1fr 1fr 24px;grid-template-areas:"n f l x" "n d d x"}
+  .rrow .n{grid-area:n}.rrow .f{grid-area:f}.rrow .l{grid-area:l}
+  .rrow .d{grid-area:d}.rrow .x{grid-area:x}
+}
+
+/* laser dose ladder */
+.ladder{display:flex;gap:2px;margin:8px 0 4px}
+.ladder div{flex:1;height:20px;border-radius:1px;position:relative}
+.ladder div.cur{box-shadow:0 0 0 2px var(--accent)}
+.laddercap{display:flex;justify-content:space-between;font-family:var(--cond);
+  font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-3)}
+.readout{
+  display:grid;grid-template-columns:1fr auto;gap:3px 10px;margin-top:9px;padding:9px 10px;
+  background:var(--chrome-2);border:1px solid var(--line);border-radius:var(--r);
+  font-family:var(--mono);font-size:12px;
+}
+.readout b{font-weight:400;color:var(--text-3)}
+.readout span{text-align:right}
+.callout{border-left:2px solid var(--amber);background:#241E10;padding:8px 10px;
+  font-size:12px;color:#E9DCC0;margin-top:9px;border-radius:0 var(--r) var(--r) 0}
+.callout.bad{border-color:var(--danger);background:#2A1417;color:#F0CFD1}
+
+/* toast */
+#toast{
+  position:absolute;left:50%;bottom:calc(var(--navbar) + env(safe-area-inset-bottom) + 16px);transform:translateX(-50%) translateY(20px);
+  background:var(--chrome-3);border:1px solid var(--line-2);color:var(--text);
+  padding:9px 15px;border-radius:99px;font-size:13px;z-index:60;
+  opacity:0;pointer-events:none;transition:opacity .18s,transform .18s;max-width:88vw;text-align:center;
+}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+@media(min-width:1080px){#toast{bottom:44px}}
+
+/* modal */
+#scrim{position:absolute;inset:0;background:rgba(6,8,12,.62);z-index:25;opacity:0;pointer-events:none;
+  transition:opacity .2s}
+#scrim.show{opacity:1;pointer-events:auto}
+@media(min-width:1080px){#scrim{display:none}}
+
+@media (prefers-reduced-motion:reduce){
+  *{transition:none!important;animation:none!important}
+}
+
+@media(max-width:520px){
+  #stSheet{display:none}
+  .palette{grid-template-columns:1fr 1fr}
+}
+
+</style>
+</head>
+<body>
+<div id="app">
+
+  <header id="topbar">
+    <div class="brand">
+      <div class="mk">Mark<em>bench</em></div>
+      <div class="doc" id="docName">Lockout lock · untitled</div>
+    </div>
+    <div class="grow"></div>
+    <div class="facetabs" id="faceTabs" role="tablist"></div>
+    <button class="chip" id="cloudChip" title="Cloud status"><i></i>Local</button>
+    <button class="btn sm pri" id="btnExport">Export</button>
+  </header>
+
+  <aside class="rail" id="leftrail" data-panel="build">
+    <div class="sheetgrip"><i></i></div>
+
+    <section class="sec">
+      <h3>Add element</h3>
+      <div class="body">
+        <div class="palette" id="palette"></div>
+      </div>
+    </section>
+
+    <section class="sec">
+      <h3>Elements <span class="tag" id="elCount">0</span></h3>
+      <div class="body">
+        <div class="layers" id="layers"></div>
+        <div class="btnrow split" style="margin-top:8px">
+          <button class="btn sm" id="btnDup">Duplicate</button>
+          <button class="btn sm dngr" id="btnDel">Delete</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="sec">
+      <h3>Arrange</h3>
+      <div class="body">
+        <div class="btnrow split">
+          <button class="btn sm" data-align="left">Left</button>
+          <button class="btn sm" data-align="hcenter">Center</button>
+          <button class="btn sm" data-align="right">Right</button>
+        </div>
+        <div class="btnrow split" style="margin-top:6px">
+          <button class="btn sm" data-align="top">Top</button>
+          <button class="btn sm" data-align="vcenter">Middle</button>
+          <button class="btn sm" data-align="bottom">Bottom</button>
+        </div>
+        <div class="btnrow split" style="margin-top:6px">
+          <button class="btn sm" data-align="stack">Stack evenly</button>
+          <button class="btn sm" data-align="fitwidth">Fit width</button>
+        </div>
+      </div>
+    </section>
+  </aside>
+
+  <div id="stagewrap">
+    <div id="stagetools">
+      <button class="tbtn" id="tGrid">Grid</button>
+      <button class="tbtn" id="tSnap">Snap</button>
+      <button class="tbtn" id="tLock">Body</button>
+      <button class="tbtn" id="tRule">Rule</button>
+      <div class="grow"></div>
+      <button class="tbtn" id="tFit">Fit</button>
+    </div>
+    <svg id="stage"></svg>
+  </div>
+
+  <aside class="rail" id="rightrail" data-panel="props">
+    <div class="sheetgrip"><i></i></div>
+    <div id="railBody"></div>
+  </aside>
+
+  <div id="statusbar">
+    <span id="stCoord">—</span>
+    <span id="stFit" class="good">Inside limits</span>
+    <span class="grow" style="flex:1"></span>
+    <span id="stSheet">—</span>
+  </div>
+
+  <div id="scrim"></div>
+  <div id="toast"></div>
+
+  <nav id="nav">
+    <button data-nav="build" aria-pressed="false">
+      <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>Build</button>
+    <button data-nav="props" aria-pressed="false">
+      <svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2.2"/><circle cx="10" cy="17" r="2.2"/></svg>Properties</button>
+    <button data-nav="stage" aria-pressed="true">
+      <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/></svg>Canvas</button>
+    <button data-nav="batch" aria-pressed="false">
+      <svg viewBox="0 0 24 24"><rect x="3" y="4" width="12" height="14" rx="1.5"/><path d="M8 8h4M8 12h4"/><path d="M18 8v12H8"/></svg>Batch</button>
+    <button data-nav="laser" aria-pressed="false">
+      <svg viewBox="0 0 24 24"><path d="M12 2v6M12 16v6M4.9 4.9l4.2 4.2M14.9 14.9l4.2 4.2M2 12h6M16 12h6M4.9 19.1l4.2-4.2M14.9 9.1l4.2-4.2"/><circle cx="12" cy="12" r="2.4"/></svg>Laser</button>
+  </nav>
+</div>
+
+<input type="file" id="fileImg" accept="image/*,.svg" hidden>
+<input type="file" id="fileJson" accept=".json,application/json" hidden>
+
+<script>
+/* ============================================================================
+   MARKBENCH — core
+   Canonical internal unit is the INCH. Everything converts at the boundary:
+   the UI converts on display, the exporters convert to millimetres.
+   ========================================================================== */
+"use strict";
+
+const MM   = 25.4;
+const CAPR = 0.716;              // cap height / em for the sans faces we ship with
+const FONTS = ["Arial","Arial Black","Arial Narrow","Verdana","Tahoma",
+               "Trebuchet MS","Segoe UI","Georgia","Times New Roman",
+               "Courier New","Consolas","Impact"];
+
+const uid = (p) => p + Math.random().toString(36).slice(2,9);
+const clamp = (v,a,b) => v<a?a:v>b?b:v;
+const esc = s => String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;")
+                          .replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+const r3 = n => (Math.round(n*1e4)/1e4);
+
+/* ---------------------------------------------------------------- units --- */
+const U = {
+  get u(){ return doc.units; },
+  toDisp(inches){ return doc.units==="in" ? inches : inches*MM; },
+  fromDisp(v){ return doc.units==="in" ? v : v/MM; },
+  step(){ return doc.units==="in" ? 0.005 : 0.1; },
+  fmt(inches,d){ const v=U.toDisp(inches); return v.toFixed(d!==undefined?d:(doc.units==="in"?3:2)); },
+  label(){ return doc.units==="in" ? "in" : "mm"; }
+};
+
+/* -------------------------------------------------------------- defaults --- */
+function textEl(o){
+  return Object.assign({
+    id:uid("e_"), type:"text", name:"Text", anchor:"tc", ox:0, oy:0,
+    w:1.0, h:0.16, rot:0, visible:true, locked:false,
+    text:"Text", font:"Arial", bold:true, italic:false, caps:false,
+    cap:0.12, track:0, lead:1.45, align:"center", valign:"middle",
+    fit:"shrink", invert:false
+  },o);
+}
+function imageEl(o){
+  return Object.assign({
+    id:uid("e_"), type:"image", name:"Graphic", anchor:"tc", ox:0, oy:0,
+    w:0.6, h:0.3, rot:0, visible:true, locked:false,
+    raw:null, data:null, srcW:0, srcH:0, bytes:0, isSvg:false,
+    dpi:600, mode:"threshold", thresh:128, invert:false, keepAR:true, fit:"contain"
+  },o);
+}
+function iconEl(o){
+  return Object.assign({
+    id:uid("e_"), type:"icon", name:"Symbol", anchor:"tc", ox:0, oy:0,
+    w:0.4, h:0.36, rot:0, visible:true, locked:false,
+    icon:"danger", invert:false
+  },o);
+}
+function shapeEl(o){
+  return Object.assign({
+    id:uid("e_"), type:"shape", name:"Shape", anchor:"tc", ox:0, oy:0,
+    w:1.0, h:0.02, rot:0, visible:true, locked:false,
+    shape:"rect", filled:true, stroke:0.008, corner:0
+  },o);
+}
+
+function defaultDoc(){
+  const d = {
+    v:2, units:"in", name:"Lockout lock",
+    lock:{ w:1.55, h:2.05, corner:0.20 },
+    label:{ w:1.25, h:1.70, corner:0.06, dx:0, dy:0 },
+    pad:0.08,
+    faces:[], roster:[{first:"Dana",last:"Whitfield",dept:"Maintenance"},
+                      {first:"",last:"",dept:""}],
+    sheet:{ cols:4, gapX:0.20, gapY:0.20, field:110/MM, order:"pairs" },
+    laser:{ material:"anodized", trim:0, manual:false,
+            speed:0, power:0, freq:0, interval:0, passes:1, fill:"scan" }
+  };
+  d.faces = [ seedOwnershipFace(d), seedDangerFace(d) ];
+  return d;
+}
+
+function seedOwnershipFace(d){
+  const W = d.label.w - 2*d.pad;
+  return { id:uid("f_"), name:"Side 1", els:[
+    textEl({name:"Property of", text:"PROPERTY OF", cap:0.085, w:W, h:0.10,
+            anchor:"tc", ox:0, oy:0.02, track:80}),
+    shapeEl({name:"Rule", shape:"rect", filled:true, w:W, h:0.012,
+             anchor:"tc", ox:0, oy:0.155}),
+    textEl({name:"First name", text:"{first}", cap:0.19, w:W, h:0.24,
+            anchor:"tc", ox:0, oy:0.215}),
+    textEl({name:"Last name", text:"{last}", cap:0.19, w:W, h:0.24,
+            anchor:"tc", ox:0, oy:0.48}),
+    textEl({name:"Department", text:"{dept}", cap:0.095, w:W, h:0.13,
+            anchor:"bc", ox:0, oy:-0.30, caps:true, track:40}),
+    imageEl({name:"Company logo", w:0.85, h:0.30, anchor:"bc", ox:0, oy:-0.02})
+  ]};
+}
+function seedDangerFace(d){
+  const W = d.label.w - 2*d.pad;
+  return { id:uid("f_"), name:"Side 2", els:[
+    iconEl({name:"Danger symbol", icon:"danger", w:0.46, h:0.40,
+            anchor:"tc", ox:0, oy:0.01}),
+    shapeEl({name:"Headline bar", shape:"rect", filled:true, w:W, h:0.17,
+             anchor:"tc", ox:0, oy:0.46}),
+    textEl({name:"Headline", text:"DANGER", cap:0.115, w:W, h:0.17,
+            anchor:"tc", ox:0, oy:0.46, invert:true, track:60}),
+    textEl({name:"Line 1", text:"DO NOT OPERATE", cap:0.085, w:W, h:0.11,
+            anchor:"tc", ox:0, oy:0.68}),
+    textEl({name:"Line 2", text:"EQUIPMENT LOCKED OUT", cap:0.062, w:W, h:0.09,
+            anchor:"tc", ox:0, oy:0.82}),
+    textEl({name:"Line 3", text:"REMOVED BY OWNER ONLY", cap:0.062, w:W, h:0.09,
+            anchor:"tc", ox:0, oy:0.94}),
+    textEl({name:"Standard", text:"OSHA 1910.147", cap:0.050, w:W, h:0.07,
+            anchor:"bc", ox:0, oy:-0.01, track:70})
+  ]};
+}
+
+let doc = defaultDoc();
+
+/* ------------------------------------------------------------- geometry --- */
+function safeRect(){
+  return { x:doc.pad, y:doc.pad,
+           w:Math.max(0.02, doc.label.w-2*doc.pad),
+           h:Math.max(0.02, doc.label.h-2*doc.pad) };
+}
+const AX = {l:0, c:.5, r:1};
+const AY = {t:0, m:.5, b:1};
+function anchorF(a){ return { fy:AY[a[0]], fx:AX[a[1]] }; }
+
+function boxOf(el){
+  const s = safeRect(), {fx,fy} = anchorF(el.anchor);
+  return { x: s.x + fx*s.w + el.ox - fx*el.w,
+           y: s.y + fy*s.h + el.oy - fy*el.h,
+           w: el.w, h: el.h };
+}
+function setBox(el, b, noClamp){
+  const s = safeRect();
+  let w = clamp(b.w, 0.02, s.w), h = clamp(b.h, 0.005, s.h);
+  let x = b.x, y = b.y;
+  if(!noClamp){
+    x = clamp(x, s.x, s.x + s.w - w);
+    y = clamp(y, s.y, s.y + s.h - h);
+  }
+  const {fx,fy} = anchorF(el.anchor);
+  el.w = w; el.h = h;
+  el.ox = x + fx*w - (s.x + fx*s.w);
+  el.oy = y + fy*h - (s.y + fy*s.h);
+}
+function reanchor(el, a){
+  const b = boxOf(el); el.anchor = a; setBox(el, b);
+}
+/* keeps every element legal after the label or padding changes */
+function reflowAll(){
+  doc.faces.forEach(f => f.els.forEach(el => setBox(el, boxOf(el))));
+}
+
+/* ----------------------------------------------------------- text engine --- */
+const _mc = document.createElement("canvas").getContext("2d");
+function fontStr(el, px){
+  return (el.italic?"italic ":"") + (el.bold?"700 ":"400 ") + px + "px " +
+         "'" + el.font + "', Arial, sans-serif";
+}
+function textW(str, el, fs){
+  if(!str) return 0;
+  _mc.font = fontStr(el, 1000);
+  const base = _mc.measureText(str).width/1000*fs;
+  const extra = (str.length-1) * fs * (el.track||0)/1000;
+  return base + Math.max(0, extra);
+}
+function fillTokens(str, ctx){
+  return String(str).replace(/\{(\w+)\}/g, (m,k)=>{
+    const v = ctx[k.toLowerCase()];
+    return v===undefined ? m : String(v);
+  });
+}
+function wrapLine(str, el, fs, maxW){
+  const words = str.split(/\s+/).filter(Boolean);
+  if(!words.length) return [""];
+  const out=[]; let cur=words[0];
+  for(let i=1;i<words.length;i++){
+    const t = cur+" "+words[i];
+    if(textW(t,el,fs) <= maxW) cur = t; else { out.push(cur); cur = words[i]; }
+  }
+  out.push(cur);
+  return out;
+}
+function layoutText(el, box, ctx){
+  let raw = fillTokens(el.text ?? "", ctx || {});
+  if(el.caps) raw = raw.toUpperCase();
+  const paras = raw.split("\n");
+  const wrap = el.fit==="wrap" || el.fit==="wrapshrink";
+  const shrink = el.fit==="shrink" || el.fit==="wrapshrink";
+  let cap = el.cap;
+  let lines = paras;
+
+  for(let pass=0; pass<4; pass++){
+    const fs = cap/CAPR;
+    lines = wrap ? paras.flatMap(p => wrapLine(p, el, fs, box.w)) : paras;
+    const maxW = Math.max(0.0001, ...lines.map(l=>textW(l,el,fs)));
+    const step = cap*el.lead;
+    const totH = (lines.length-1)*step + cap;
+    if(!shrink) break;
+    const k = Math.min(1, box.w/maxW, box.h/totH);
+    if(k > 0.999) break;
+    cap = cap*k*0.999;
+    if(!wrap) break;
+  }
+  const fs = cap/CAPR, step = cap*el.lead;
+  const totH = (lines.length-1)*step + cap;
+  const widths = lines.map(l=>textW(l,el,fs));
+  let top = box.y;
+  if(el.valign==="middle") top = box.y + (box.h-totH)/2;
+  else if(el.valign==="bottom") top = box.y + box.h - totH;
+  return { lines, widths, cap, fs, step, totH, top,
+           maxW: Math.max(0, ...widths) };
+}
+
+/* ------------------------------------------------------------------ icons --- */
+function ringCircle(cx,cy,r,n){
+  const out=[]; n=n||44;
+  for(let i=0;i<n;i++){ const a=i/n*Math.PI*2; out.push([cx+Math.cos(a)*r, cy+Math.sin(a)*r]); }
+  return out;
+}
+const ICONS = {
+  /* every icon returns closed rings inside the unit square, y down */
+  danger(){
+    const A=[.5,.03], B=[.97,.94], C=[.03,.94];
+    const d=(p,q)=>Math.hypot(p[0]-q[0],p[1]-q[1]);
+    const a=d(B,C), b=d(A,C), c=d(A,B), per=a+b+c;
+    const ix=(a*A[0]+b*B[0]+c*C[0])/per, iy=(a*A[1]+b*B[1]+c*C[1])/per;
+    const area=Math.abs((B[0]-A[0])*(C[1]-A[1])-(C[0]-A[0])*(B[1]-A[1]))/2, r=area/(per/2);
+    const k=(r-0.105)/r;
+    const inner=[A,B,C].map(p=>[ix+(p[0]-ix)*k, iy+(p[1]-iy)*k]);
+    const iTop=inner[0][1], iBot=inner[1][1], hIn=iBot-iTop;
+    const bt=iTop+hIn*0.30, bb=iTop+hIn*0.68, wt=0.062, wb=wt*0.58;
+    const bar=[[ix-wt,bt],[ix+wt,bt],[ix+wb,bb],[ix-wb,bb]];
+    const dT=iTop+hIn*0.78, dB=iTop+hIn*0.92, dr=Math.min(wt,(dB-dT)/2);
+    const dcy=(dT+dB)/2;
+    return [[A,B,C], inner, bar, ringCircle(ix,dcy,dr,20)];
+  },
+  bolt(){
+    return [[[.56,.02],[.20,.55],[.44,.55],[.34,.98],[.80,.40],[.53,.40],[.72,.02]]];
+  },
+  padlock(){
+    const body=[[.10,.44],[.90,.44],[.90,.98],[.10,.98]];
+    const so=ringCircle(.5,.44,.30,36).filter(p=>p[1]<=.45);
+    const si=ringCircle(.5,.44,.18,36).filter(p=>p[1]<=.45).reverse();
+    const shackle=[[.20,.45],...so.slice().sort((p,q)=>p[0]-q[0]).reverse(),[.80,.45],[.68,.45],
+                   ...si.slice().sort((p,q)=>p[0]-q[0]),[.32,.45]];
+    const kh=ringCircle(.5,.62,.085,20);
+    const stem=[[.455,.62],[.545,.62],[.575,.86],[.425,.86]];
+    return [body, kh, stem, shackle];
+  },
+  exclaim(){
+    const outer=ringCircle(.5,.5,.48,48);
+    const inner=ringCircle(.5,.5,.375,48).reverse();
+    const bt=.22, bb=.60, wt=.062, wb=.040;
+    const bar=[[.5-wt,bt],[.5+wt,bt],[.5+wb,bb],[.5-wb,bb]];
+    return [outer, inner, bar, ringCircle(.5,.72,.058,20)];
+  },
+  arcflash(){
+    const rays=[];
+    for(let i=0;i<12;i++){
+      const a=i/12*Math.PI*2, a2=a+0.13;
+      rays.push([[.5+Math.cos(a)*.14,.5+Math.sin(a)*.14],
+                 [.5+Math.cos(a)*.49,.5+Math.sin(a)*.49],
+                 [.5+Math.cos(a2)*.49,.5+Math.sin(a2)*.49],
+                 [.5+Math.cos(a2)*.14,.5+Math.sin(a2)*.14]]);
+    }
+    return [ringCircle(.5,.5,.13,28), ...rays];
+  },
+  tag(){
+    const o=[[.06,.24],[.68,.24],[.94,.5],[.68,.76],[.06,.76]];
+    const i=[[.14,.31],[.65,.31],[.83,.5],[.65,.69],[.14,.69]].reverse();
+    return [o,i,ringCircle(.24,.5,.055,20)];
+  }
+};
+const ICON_NAMES = { danger:"Danger triangle", bolt:"Lightning bolt", padlock:"Padlock",
+                     exclaim:"Exclamation circle", arcflash:"Arc flash burst", tag:"Tag outline" };
+
+/* ------------------------------------------------- element -> primitives --- */
+function rotPt(p, cx, cy, deg){
+  if(!deg) return p;
+  const a = deg*Math.PI/180, s=Math.sin(a), c=Math.cos(a);
+  const dx=p[0]-cx, dy=p[1]-cy;
+  return [cx+dx*c-dy*s, cy+dx*s+dy*c];
+}
+function fitInto(box, ar){                 // ar = w/h of the content
+  if(!ar || !isFinite(ar)) return box;
+  const bAR = box.w/box.h;
+  if(ar > bAR){ const h = box.w/ar; return {x:box.x, y:box.y+(box.h-h)/2, w:box.w, h}; }
+  const w = box.h*ar; return {x:box.x+(box.w-w)/2, y:box.y, w, h:box.h};
+}
+
+function elPrims(el, ctx){
+  if(el.visible === false) return [];
+  const box = boxOf(el);
+  const rc = [box.x+box.w/2, box.y+box.h/2];
+  const rot = el.rot||0;
+  const out = [];
+
+  if(el.type==="text"){
+    const L = layoutText(el, box, ctx);
+    L.lines.forEach((ln,i)=>{
+      if(!ln) return;
+      const w = L.widths[i];
+      let x = box.x;
+      if(el.align==="center") x = box.x + (box.w-w)/2;
+      else if(el.align==="right") x = box.x + box.w - w;
+      out.push({ t:"text", x, y:L.top + L.cap + i*L.step, str:ln, cap:L.cap, fs:L.fs,
+                 w, font:el.font, bold:el.bold, italic:el.italic, track:el.track,
+                 invert:el.invert, rot, rc });
+    });
+  }
+  else if(el.type==="shape"){
+    if(el.shape==="ellipse"){
+      const ring = ringCircle(0,0,0.5,56).map(p=>[box.x+box.w/2+p[0]*box.w, box.y+box.h/2+p[1]*box.h]);
+      out.push({ t:"poly", rings:[ring.map(p=>rotPt(p,rc[0],rc[1],rot))],
+                 filled:el.filled, stroke:el.stroke });
+    } else {
+      out.push({ t:"rect", x:box.x, y:box.y, w:box.w, h:box.h, rx:el.corner||0,
+                 filled:el.filled, stroke:el.stroke, rot, rc });
+    }
+  }
+  else if(el.type==="icon"){
+    const rings = (ICONS[el.icon]||ICONS.danger)();
+    let minX=1e9,minY=1e9,maxX=-1e9,maxY=-1e9;
+    rings.forEach(r=>r.forEach(p=>{minX=Math.min(minX,p[0]);maxX=Math.max(maxX,p[0]);
+                                   minY=Math.min(minY,p[1]);maxY=Math.max(maxY,p[1]);}));
+    const uw=Math.max(1e-6,maxX-minX), uh=Math.max(1e-6,maxY-minY);
+    const f = fitInto(box, uw/uh);
+    const mapped = rings.map(r=>r.map(p=>rotPt(
+      [f.x + (p[0]-minX)/uw*f.w, f.y + (p[1]-minY)/uh*f.h], rc[0], rc[1], rot)));
+    out.push({ t:"poly", rings:mapped, filled:true, invert:el.invert });
+  }
+  else if(el.type==="image"){
+    const ar = el.srcW && el.srcH ? el.srcW/el.srcH : null;
+    const f = el.fit==="stretch" || !ar ? box : fitInto(box, ar);
+    if(el.data) out.push({ t:"img", x:f.x, y:f.y, w:f.w, h:f.h, href:el.data, rot, rc });
+    else out.push({ t:"ph", x:box.x, y:box.y, w:box.w, h:box.h, label:el.name||"GRAPHIC" });
+  }
+  return out;
+}
+
+function facePrims(face, ctx){
+  const out = [];
+  face.els.forEach(el => out.push(...elPrims(el, ctx)));
+  return out;
+}
+function rosterCtx(i){
+  const r = doc.roster[i] || {};
+  return { first:r.first||"", last:r.last||"", dept:r.dept||"",
+           n:String(i+1), total:String(doc.roster.length),
+           date:new Date().toISOString().slice(0,10) };
+}
+
+/* --------------------------------------------------------- SVG serialiser --- */
+function primSvg(p, ox, oy, k, opt){
+  const X = v => r3((v+ox)*k), Y = v => r3((v+oy)*k);
+  const rot = p.rot ? ` transform="rotate(${r3(p.rot)} ${X(p.rc[0])} ${Y(p.rc[1])})"` : "";
+  const ink = opt.ink || "#111111";
+  if(p.t==="ph"){
+    if(opt.forExport) return "";
+    return `<rect x="${X(p.x)}" y="${Y(p.y)}" width="${r3(p.w*k)}" height="${r3(p.h*k)}"`
+      + ` fill="none" stroke="${opt.guide}" stroke-width="${r3(0.008*k)}" stroke-dasharray="${r3(.03*k)} ${r3(.02*k)}"/>`
+      + `<text x="${X(p.x+p.w/2)}" y="${Y(p.y+p.h/2)}" fill="${opt.guide}"`
+      + ` font-family="Arial" font-size="${r3(Math.min(p.h*0.34,p.w*0.20,0.09)*k)}"`
+      + ` text-anchor="middle" dominant-baseline="central">${esc(p.label)}</text>`;
+  }
+  if(p.t==="text"){
+    const ls = p.track ? ` letter-spacing="${r3(p.fs*p.track/1000*k)}"` : "";
+    return `<text x="${X(p.x)}" y="${Y(p.y)}" font-family="${esc(p.font)}, Arial, sans-serif"`
+      + ` font-size="${r3(p.fs*k)}" font-weight="${p.bold?700:400}"`
+      + (p.italic?` font-style="italic"`:"") + ls
+      + ` fill="${p.invert ? (opt.knock||"#FFFFFF") : ink}" xml:space="preserve"${rot}>`
+      + `${esc(p.str)}</text>`;
+  }
+  if(p.t==="rect"){
+    const style = p.filled ? `fill="${ink}"`
+      : `fill="none" stroke="${ink}" stroke-width="${r3((p.stroke||0.008)*k)}"`;
+    return `<rect x="${X(p.x)}" y="${Y(p.y)}" width="${r3(p.w*k)}" height="${r3(p.h*k)}"`
+      + ` rx="${r3((p.rx||0)*k)}" ${style}${rot}/>`;
+  }
+  if(p.t==="poly"){
+    const d = p.rings.map(r=>"M"+r.map(v=>X(v[0])+","+Y(v[1])).join("L")+"Z").join("");
+    return p.filled===false
+      ? `<path d="${d}" fill="none" stroke="${ink}" stroke-width="${r3((p.stroke||0.008)*k)}"/>`
+      : `<path d="${d}" fill="${p.invert?(opt.knock||"#FFFFFF"):ink}" fill-rule="evenodd"/>`;
+  }
+  if(p.t==="img"){
+    return `<image x="${X(p.x)}" y="${Y(p.y)}" width="${r3(p.w*k)}" height="${r3(p.h*k)}"`
+      + ` preserveAspectRatio="none" href="${p.href}" xlink:href="${p.href}"${rot}/>`;
+  }
+  return "";
+}
+
+/* ---------------------------------------------------------------- sheet --- */
+function sheetFaces(){
+  const out = [];
+  const order = doc.sheet.order;
+  const push = (fi, ri) => {
+    const f = doc.faces[fi]; if(!f) return;
+    const r = doc.roster[ri]||{};
+    const nm = (r.first||r.last) ? (r.first+" "+r.last).trim() : ("Lock "+(ri+1));
+    out.push({ name:nm+" · "+f.name, prims:facePrims(f, rosterCtx(ri)) });
+  };
+  if(order==="pairs"){
+    doc.roster.forEach((_,ri)=> doc.faces.forEach((_,fi)=> push(fi,ri)));
+  } else if(order==="grouped"){
+    doc.faces.forEach((_,fi)=> doc.roster.forEach((_,ri)=> push(fi,ri)));
+  } else {
+    const fi = parseInt(order.replace("face",""))||0;
+    doc.roster.forEach((_,ri)=> push(fi,ri));
+  }
+  const cols = Math.max(1, Math.round(doc.sheet.cols));
+  const rows = Math.max(1, Math.ceil(out.length/cols));
+  const cw = doc.label.w + doc.sheet.gapX, ch = doc.label.h + doc.sheet.gapY;
+  out.forEach((f,i)=>{ f.ox = (i%cols)*cw; f.oy = Math.floor(i/cols)*ch; });
+  return { faces:out, cols, rows,
+           w: cols*doc.label.w + (cols-1)*doc.sheet.gapX,
+           h: rows*doc.label.h + (rows-1)*doc.sheet.gapY };
+}
+
+function exportSVG(){
+  const sh = sheetFaces(), k = MM;
+  const opt = { forExport:true, ink:"#000000", knock:"#FFFFFF", guide:"#BBBBBB" };
+  let s = `<?xml version="1.0" encoding="UTF-8"?>\n`
+    + `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" `
+    + `width="${r3(sh.w*k)}mm" height="${r3(sh.h*k)}mm" `
+    + `viewBox="0 0 ${r3(sh.w*k)} ${r3(sh.h*k)}">\n`
+    + `<title>${esc(doc.name)} — ${sh.faces.length} faces</title>\n`;
+  sh.faces.forEach((f,i)=>{
+    s += `<g id="${esc("face_"+(i+1)+"_"+f.name.replace(/[^A-Za-z0-9]+/g,"_"))}">\n`;
+    f.prims.forEach(p=>{ const t = primSvg(p, f.ox, f.oy, k, opt); if(t) s += "  "+t+"\n"; });
+    s += `</g>\n`;
+  });
+  return s + `</svg>\n`;
+}
+
+/* ---------------------------------------------------- LightBurn serialiser --- */
+function lbCut(idx, name, p, isCut, output){
+  return `  <CutSetting type="${isCut?"Cut":"Scan"}">
+    <index Value="${idx}"/>
+    <name Value="${esc(name)}"/>
+    <maxPower Value="${p.power}"/>
+    <maxPower2 Value="${p.power}"/>
+    <speed Value="${p.speed}"/>
+    <frequency Value="${Math.round(p.freq*1000)}"/>
+    <numPasses Value="${p.passes}"/>
+    <interval Value="${p.interval}"/>
+    <QPulseWidth Value="200"/>
+    <doOutput Value="${output?1:0}"/>
+    <priority Value="${idx}"/>
+    <tabCount Value="1"/>
+    <tabCountMax Value="1"/>
+  </CutSetting>\n`;
+}
+function lbXForm(cx, cy, rot){
+  if(!rot) return `1 0 0 1 ${r3(cx)} ${r3(cy)}`;
+  const a = -rot*Math.PI/180, s=Math.sin(a), c=Math.cos(a);
+  return `${r3(c)} ${r3(s)} ${r3(-s)} ${r3(c)} ${r3(cx)} ${r3(cy)}`;
+}
+function primLbrn(p, ox, oy, H, pad){
+  const k = MM;
+  const X = v => (v+ox)*k, Y = v => H - (v+oy)*k;
+  if(p.t==="ph") return "";
+  if(p.t==="text"){
+    return `${pad}<Shape Type="Text" CutIndex="0" Font="${esc(p.font)}" Str="${esc(p.str)}" `
+      + `H="${r3(p.cap*k)}" LS="${r3(p.fs*k*(p.track||0)/1000)}" LnS="0" Ah="0" Av="0" `
+      + `Bold="${p.bold?1:0}" Italic="${p.italic?1:0}" Weld="0" HasBackupPath="0">\n`
+      + `${pad}  <XForm>${lbXForm(X(p.x), Y(p.y), p.rot)}</XForm>\n${pad}</Shape>\n`;
+  }
+  if(p.t==="rect"){
+    return `${pad}<Shape Type="Rect" CutIndex="0" W="${r3(p.w*k)}" H="${r3(p.h*k)}" `
+      + `Cr="${r3((p.rx||0)*k)}">\n`
+      + `${pad}  <XForm>${lbXForm(X(p.x+p.w/2), Y(p.y+p.h/2), p.rot)}</XForm>\n${pad}</Shape>\n`;
+  }
+  if(p.t==="poly"){
+    let v="", pr="", n=0;
+    p.rings.forEach(r=>{
+      const st=n;
+      r.forEach(q=>{ v += `V${r3(X(q[0]))} ${r3(Y(q[1]))}`; n++; });
+      for(let i=st;i<n;i++) pr += `L${i} ${i+1<n?i+1:st}`;
+    });
+    return `${pad}<Shape Type="Path" CutIndex="0">\n${pad}  <XForm>1 0 0 1 0 0</XForm>\n`
+      + `${pad}  <VertList>${v}</VertList>\n${pad}  <PrimList>${pr}</PrimList>\n${pad}</Shape>\n`;
+  }
+  if(p.t==="img"){
+    return `${pad}<Shape Type="Rect" CutIndex="1" W="${r3(p.w*k)}" H="${r3(p.h*k)}" Cr="0">\n`
+      + `${pad}  <XForm>${lbXForm(X(p.x+p.w/2), Y(p.y+p.h/2), p.rot)}</XForm>\n${pad}</Shape>\n`;
+  }
+  return "";
+}
+function exportLBRN(){
+  const sh = sheetFaces(), H = sh.h*MM, p = laserEffective();
+  let s = `<?xml version="1.0" encoding="UTF-8"?>\n`
+    + `<LightBurnProject AppVersion="1.7.00" DeviceName="Haas HL-50E" FormatVersion="1" `
+    + `MaterialHeight="0" MirrorX="False" MirrorY="False">\n`;
+  s += lbCut(0, MATERIALS[doc.laser.material].name.slice(0,30), p, doc.laser.fill==="cut", true);
+  s += lbCut(1, "Guide — no output", {power:10,speed:1000,freq:30,passes:1,interval:0.05}, true, false);
+  sh.faces.forEach(f=>{
+    s += `  <Shape Type="Group">\n    <XForm>1 0 0 1 0 0</XForm>\n    <Children>\n`;
+    f.prims.forEach(q=> s += primLbrn(q, f.ox, f.oy, H, "      "));
+    s += `    </Children>\n  </Shape>\n`;
+  });
+  return s + `</LightBurnProject>\n`;
+}
+
+/* ------------------------------------------------------------ fit checker --- */
+function fitIssues(){
+  const s = safeRect(), out = [];
+  const t = 0.002;
+  doc.faces.forEach(f=>{
+    f.els.forEach(el=>{
+      if(el.visible===false) return;
+      elPrims(el, rosterCtx(0)).forEach(p=>{
+        let x0,y0,x1,y1;
+        if(p.t==="text"){ x0=p.x; x1=p.x+p.w; y0=p.y-p.cap; y1=p.y + (/[gjpqyQ,;]/.test(p.str)?p.cap*0.22:0); }
+        else if(p.t==="poly"){
+          const xs=[],ys=[]; p.rings.forEach(r=>r.forEach(v=>{xs.push(v[0]);ys.push(v[1]);}));
+          x0=Math.min(...xs);x1=Math.max(...xs);y0=Math.min(...ys);y1=Math.max(...ys);
+        } else { x0=p.x;y0=p.y;x1=p.x+p.w;y1=p.y+p.h; }
+        if(x0<s.x-t||y0<s.y-t||x1>s.x+s.w+t||y1>s.y+s.h+t){
+          const nm = f.name+" · "+el.name;
+          if(!out.includes(nm)) out.push(nm);
+        }
+      });
+    });
+  });
+  return out;
+}
+
+/* ============================================================================
+   MARKBENCH — stage editor
+   The stage is one SVG whose viewBox IS the world, measured in inches.
+   Screen scale = pixel width / viewBox width, so a handle drawn at 9/scale
+   inches is always 9 px no matter the zoom.
+   ========================================================================== */
+
+const ui = {
+  faceIdx:0, previewIdx:0, sel:[],
+  view:{x:-0.4, y:-0.4, w:3}, scale:1,
+  showGrid:true, snap:true, showLock:true, showRule:true,
+  grid:1/16,
+  panel:"stage",
+  drag:null, guides:[]
+};
+
+const stage = document.getElementById("stage");
+const face = () => doc.faces[ui.faceIdx] || doc.faces[0];
+const selEls = () => face().els.filter(e => ui.sel.includes(e.id));
+const firstSel = () => selEls()[0] || null;
+
+function lockOrigin(){
+  return { x:(doc.label.w-doc.lock.w)/2 - doc.label.dx,
+           y:(doc.label.h-doc.lock.h)/2 - doc.label.dy };
+}
+function worldBounds(){
+  const lo = lockOrigin();
+  const x0 = Math.min(0, lo.x), y0 = Math.min(0, lo.y);
+  const x1 = Math.max(doc.label.w, lo.x+doc.lock.w);
+  const y1 = Math.max(doc.label.h, lo.y+doc.lock.h);
+  return {x:x0, y:y0, w:x1-x0, h:y1-y0};
+}
+function fitView(){
+  const r = stage.getBoundingClientRect();
+  if(!r.width || !r.height) return;
+  const b = worldBounds();
+  const padTop = ui.showRule ? 0.34 : 0.18, padL = ui.showRule ? 0.30 : 0.18;
+  const bw = b.w + padL + 0.18, bh = b.h + padTop + 0.18;
+  const z = Math.min(r.width/bw, r.height/bh) * 0.94;
+  const vw = r.width/z, vh = r.height/z;
+  ui.view = { x: b.x - padL - (vw-bw)/2, y: b.y - padTop - (vh-bh)/2, w: vw };
+  drawStage();
+}
+function viewRect(){
+  const r = stage.getBoundingClientRect();
+  const h = r.height ? ui.view.w * r.height / r.width : ui.view.w;
+  return { x:ui.view.x, y:ui.view.y, w:ui.view.w, h };
+}
+function toWorld(ev){
+  const r = stage.getBoundingClientRect(), v = viewRect();
+  return { x: v.x + (ev.clientX-r.left)/r.width*v.w,
+           y: v.y + (ev.clientY-r.top)/r.height*v.h };
+}
+
+/* ------------------------------------------------------------------ draw --- */
+function drawStage(){
+  const r = stage.getBoundingClientRect();
+  if(!r.width) return;
+  const v = viewRect();
+  ui.scale = r.width / v.w;                       // px per inch
+  const S = ui.scale, px = n => n/S;              // n screen px -> inches
+  stage.setAttribute("viewBox", `${r3(v.x)} ${r3(v.y)} ${r3(v.w)} ${r3(v.h)}`);
+  stage.setAttribute("preserveAspectRatio","none");
+
+  const lo = lockOrigin(), sf = safeRect(), L = doc.label;
+  let s = "";
+
+  /* --- lock body --- */
+  if(ui.showLock){
+    s += `<rect x="${r3(lo.x)}" y="${r3(lo.y)}" width="${r3(doc.lock.w)}" height="${r3(doc.lock.h)}"`
+      + ` rx="${r3(doc.lock.corner)}" fill="#20262F" stroke="#39424F" stroke-width="1" vector-effect="non-scaling-stroke"/>`;
+  }
+  /* --- label stock --- */
+  s += `<rect x="0" y="0" width="${r3(L.w)}" height="${r3(L.h)}" rx="${r3(L.corner)}"`
+    + ` fill="var(--paper)" stroke="#9A968B" stroke-width="1" vector-effect="non-scaling-stroke"/>`;
+
+  /* --- grid --- */
+  if(ui.showGrid && ui.grid*S >= 4){
+    let g = "";
+    for(let x=ui.grid; x<L.w-1e-6; x+=ui.grid){
+      const major = Math.abs((x/0.125)-Math.round(x/0.125))<1e-6;
+      g += `<line x1="${r3(x)}" y1="0" x2="${r3(x)}" y2="${r3(L.h)}" stroke="#C9C6BB" stroke-width="${major?1:0.6}" opacity="${major?.85:.5}" vector-effect="non-scaling-stroke"/>`;
+    }
+    for(let y=ui.grid; y<L.h-1e-6; y+=ui.grid){
+      const major = Math.abs((y/0.125)-Math.round(y/0.125))<1e-6;
+      g += `<line x1="0" y1="${r3(y)}" x2="${r3(L.w)}" y2="${r3(y)}" stroke="#C9C6BB" stroke-width="${major?1:0.6}" opacity="${major?.85:.5}" vector-effect="non-scaling-stroke"/>`;
+    }
+    s += `<g clip-path="url(#lblclip)">${g}</g>`;
+  }
+  /* --- safe area --- */
+  s += `<rect x="${r3(sf.x)}" y="${r3(sf.y)}" width="${r3(sf.w)}" height="${r3(sf.h)}"`
+    + ` fill="none" stroke="#D8452E" stroke-width="1" stroke-dasharray="4 3" opacity=".65" vector-effect="non-scaling-stroke"/>`;
+
+  /* --- artwork --- */
+  const opt = { forExport:false, ink:"#14181F", knock:"var(--paper)", guide:"#A8A49A" };
+  const ctx = rosterCtx(ui.previewIdx);
+  s += `<g clip-path="url(#lblclip)">`;
+  face().els.forEach(el=>{ elPrims(el, ctx).forEach(p=>{ s += primSvg(p, 0, 0, 1, opt); }); });
+  s += `</g>`;
+
+  /* --- selection --- */
+  selEls().forEach(el=>{
+    const b = boxOf(el), c=[b.x+b.w/2,b.y+b.h/2], rot=el.rot||0;
+    const tr = rot?` transform="rotate(${r3(rot)} ${r3(c[0])} ${r3(c[1])})"`:"";
+    s += `<rect x="${r3(b.x)}" y="${r3(b.y)}" width="${r3(b.w)}" height="${r3(b.h)}"`
+      + ` fill="none" stroke="var(--cyan)" stroke-width="1.4" vector-effect="non-scaling-stroke"${tr}/>`;
+  });
+  const one = ui.sel.length===1 ? firstSel() : null;
+  if(one && !one.locked){
+    const b = boxOf(one), c=[b.x+b.w/2,b.y+b.h/2], hs = px(9);
+    const tr = one.rot?` transform="rotate(${r3(one.rot)} ${r3(c[0])} ${r3(c[1])})"`:"";
+    s += `<g${tr}>`;
+    HANDLES.forEach(h=>{
+      const p = handlePt(b,h);
+      s += `<rect x="${r3(p[0]-hs/2)}" y="${r3(p[1]-hs/2)}" width="${r3(hs)}" height="${r3(hs)}"`
+        + ` fill="#0C0F14" stroke="var(--cyan)" stroke-width="1.4" vector-effect="non-scaling-stroke"/>`;
+    });
+    s += `</g>`;
+  }
+
+  /* --- snap guides --- */
+  ui.guides.forEach(g=>{
+    s += g.axis==="x"
+      ? `<line x1="${r3(g.v)}" y1="${r3(v.y)}" x2="${r3(g.v)}" y2="${r3(v.y+v.h)}" stroke="var(--accent)" stroke-width="1" stroke-dasharray="3 3" vector-effect="non-scaling-stroke"/>`
+      : `<line x1="${r3(v.x)}" y1="${r3(g.v)}" x2="${r3(v.x+v.w)}" y2="${r3(g.v)}" stroke="var(--accent)" stroke-width="1" stroke-dasharray="3 3" vector-effect="non-scaling-stroke"/>`;
+  });
+
+  /* --- machinist's rule (the scale reference along top + left) --- */
+  if(ui.showRule) s += drawRule(v, S);
+
+  stage.innerHTML =
+    `<defs><clipPath id="lblclip"><rect x="0" y="0" width="${r3(L.w)}" height="${r3(L.h)}" rx="${r3(L.corner)}"/></clipPath></defs>` + s;
+}
+
+function drawRule(v, S){
+  const L = doc.label, px = n=>n/S;
+  const inMode = doc.units==="in";
+  const div = inMode ? 1/16 : 1/MM;             // finest tick
+  const majEvery = inMode ? 16 : 10;            // 1 in, or 10 mm
+  const midEvery = inMode ? 8 : 5;
+  const y0 = -px(26), x0 = -px(26), th = px(9), tm = px(6), ts = px(3.5);
+  const fs = px(9);
+  let s = `<g pointer-events="none">`;
+  s += `<rect x="0" y="${r3(y0-th-px(13))}" width="${r3(L.w)}" height="${r3(th+px(13))}" fill="#171D28"/>`;
+  s += `<rect x="${r3(x0-th-px(13))}" y="0" width="${r3(th+px(13))}" height="${r3(L.h)}" fill="#171D28"/>`;
+  s += `<line x1="0" y1="${r3(y0)}" x2="${r3(L.w)}" y2="${r3(y0)}" stroke="#7E8DA4" stroke-width="1.2" vector-effect="non-scaling-stroke"/>`;
+  const n = Math.floor(L.w/div + 1e-6);
+  for(let i=0;i<=n;i++){
+    const x = i*div;
+    const maj = i%majEvery===0, mid = i%midEvery===0;
+    const len = maj?th:mid?tm:ts;
+    if(!maj && !mid && div*S < 3.5) continue;
+    s += `<line x1="${r3(x)}" y1="${r3(y0)}" x2="${r3(x)}" y2="${r3(y0-len)}" stroke="${maj?"#C4CEDC":"#6E7C93"}" stroke-width="${maj?1.2:1}" vector-effect="non-scaling-stroke"/>`;
+    if(maj && i>0) s += `<text x="${r3(x)}" y="${r3(y0-th-px(3))}" fill="#B6C2D2" font-family="ui-monospace,monospace" font-size="${r3(fs)}" text-anchor="middle">${inMode?(i/16):(i)}</text>`;
+  }
+  s += `<line x1="${r3(x0)}" y1="0" x2="${r3(x0)}" y2="${r3(L.h)}" stroke="#7E8DA4" stroke-width="1.2" vector-effect="non-scaling-stroke"/>`;
+  const m = Math.floor(L.h/div + 1e-6);
+  for(let i=0;i<=m;i++){
+    const y = i*div;
+    const maj = i%majEvery===0, mid = i%midEvery===0;
+    const len = maj?th:mid?tm:ts;
+    if(!maj && !mid && div*S < 3.5) continue;
+    s += `<line x1="${r3(x0)}" y1="${r3(y)}" x2="${r3(x0-len)}" y2="${r3(y)}" stroke="${maj?"#C4CEDC":"#6E7C93"}" stroke-width="${maj?1.2:1}" vector-effect="non-scaling-stroke"/>`;
+    if(maj && i>0) s += `<text x="${r3(x0-th-px(4))}" y="${r3(y+fs*0.36)}" fill="#B6C2D2" font-family="ui-monospace,monospace" font-size="${r3(fs)}" text-anchor="end">${inMode?(i/16):(i)}</text>`;
+  }
+  s += `<text x="${r3(x0-px(4))}" y="${r3(y0-px(4))}" fill="#5C6980" font-family="ui-monospace,monospace" font-size="${r3(fs)}" text-anchor="end">${U.label()}</text>`;
+  return s+`</g>`;
+}
+
+/* --------------------------------------------------------------- handles --- */
+const HANDLES = ["nw","n","ne","e","se","s","sw","w"];
+function handlePt(b,h){
+  const x = h.includes("w")?b.x : h.includes("e")?b.x+b.w : b.x+b.w/2;
+  const y = h.includes("n")?b.y : h.includes("s")?b.y+b.h : b.y+b.h/2;
+  return [x,y];
+}
+function unrot(pt, c, deg){
+  if(!deg) return pt;
+  const a = -deg*Math.PI/180, s=Math.sin(a), co=Math.cos(a);
+  const dx=pt.x-c[0], dy=pt.y-c[1];
+  return { x:c[0]+dx*co-dy*s, y:c[1]+dx*s+dy*co };
+}
+function hitElement(w){
+  const els = face().els;
+  for(let i=els.length-1;i>=0;i--){
+    const el = els[i];
+    if(el.visible===false || el.locked) continue;
+    const b = boxOf(el), c=[b.x+b.w/2,b.y+b.h/2];
+    const p = unrot(w, c, el.rot||0);
+    const m = 4/ui.scale;
+    if(p.x>=b.x-m && p.x<=b.x+b.w+m && p.y>=b.y-m && p.y<=b.y+b.h+m) return el;
+  }
+  return null;
+}
+function hitHandle(w){
+  if(ui.sel.length!==1) return null;
+  const el = firstSel(); if(!el || el.locked) return null;
+  const b = boxOf(el), c=[b.x+b.w/2,b.y+b.h/2];
+  const p = unrot(w, c, el.rot||0), t = 10/ui.scale;
+  for(const h of HANDLES){
+    const q = handlePt(b,h);
+    if(Math.abs(p.x-q[0])<t && Math.abs(p.y-q[1])<t) return h;
+  }
+  return null;
+}
+
+/* --------------------------------------------------------------- snapping --- */
+function snapTargets(exceptIds){
+  const s = safeRect();
+  const xs = [{v:s.x,l:"edge"},{v:s.x+s.w/2,l:"center"},{v:s.x+s.w,l:"edge"}];
+  const ys = [{v:s.y,l:"edge"},{v:s.y+s.h/2,l:"middle"},{v:s.y+s.h,l:"edge"}];
+  face().els.forEach(el=>{
+    if(exceptIds.includes(el.id) || el.visible===false) return;
+    const b = boxOf(el);
+    xs.push({v:b.x},{v:b.x+b.w/2},{v:b.x+b.w});
+    ys.push({v:b.y},{v:b.y+b.h/2},{v:b.y+b.h});
+  });
+  return {xs,ys};
+}
+function applySnap(box, ids){
+  ui.guides = [];
+  if(!ui.snap) return box;
+  const tol = 7/ui.scale;
+  const T = snapTargets(ids);
+  const cands = [[box.x,0],[box.x+box.w/2,0.5],[box.x+box.w,1]];
+  let bestX=null;
+  cands.forEach(([v,f])=>{
+    T.xs.forEach(t=>{
+      const d = Math.abs(v-t.v);
+      if(d<tol && (!bestX || d<bestX.d)) bestX = {d, dx:t.v-v, gv:t.v};
+    });
+  });
+  const candsY = [[box.y,0],[box.y+box.h/2,0.5],[box.y+box.h,1]];
+  let bestY=null;
+  candsY.forEach(([v,f])=>{
+    T.ys.forEach(t=>{
+      const d = Math.abs(v-t.v);
+      if(d<tol && (!bestY || d<bestY.d)) bestY = {d, dy:t.v-v, gv:t.v};
+    });
+  });
+  if(bestX){ box.x += bestX.dx; ui.guides.push({axis:"x", v:bestX.gv}); }
+  else { box.x = Math.round(box.x/ui.grid)*ui.grid; }
+  if(bestY){ box.y += bestY.dy; ui.guides.push({axis:"y", v:bestY.gv}); }
+  else { box.y = Math.round(box.y/ui.grid)*ui.grid; }
+  return box;
+}
+
+/* ------------------------------------------------------------- interaction --- */
+let pointers = new Map(), pinch = null;
+
+stage.addEventListener("pointerdown", ev=>{
+  stage.setPointerCapture(ev.pointerId);
+  pointers.set(ev.pointerId, ev);
+  if(pointers.size===2){
+    const [a,b] = [...pointers.values()];
+    pinch = { d:Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY), w:ui.view.w,
+              cx:(a.clientX+b.clientX)/2, cy:(a.clientY+b.clientY)/2 };
+    ui.drag = null; return;
+  }
+  const w = toWorld(ev);
+  const h = hitHandle(w);
+  if(h){
+    const el = firstSel();
+    ui.drag = { mode:"resize", h, el, start:w, box0:boxOf(el), cap0:el.cap };
+    return;
+  }
+  const el = hitElement(w);
+  if(el){
+    if(ev.shiftKey){ ui.sel = ui.sel.includes(el.id) ? ui.sel.filter(i=>i!==el.id) : [...ui.sel, el.id]; }
+    else if(!ui.sel.includes(el.id)) ui.sel = [el.id];
+    ui.drag = { mode:"move", start:w, boxes:selEls().map(e=>({e, b:boxOf(e)})) };
+    syncSelection();
+  } else {
+    if(!ev.shiftKey){ ui.sel = []; syncSelection(); }
+    ui.drag = { mode:"pan", start:{cx:ev.clientX, cy:ev.clientY}, vx:ui.view.x, vy:ui.view.y };
+  }
+  drawStage();
+});
+
+stage.addEventListener("pointermove", ev=>{
+  if(pointers.has(ev.pointerId)) pointers.set(ev.pointerId, ev);
+  if(pinch && pointers.size===2){
+    const [a,b] = [...pointers.values()];
+    const d = Math.hypot(a.clientX-b.clientX, a.clientY-b.clientY);
+    if(d>4){
+      const r = stage.getBoundingClientRect();
+      const before = { x: ui.view.x + (pinch.cx-r.left)/r.width*ui.view.w,
+                       y: ui.view.y + (pinch.cy-r.top)/r.width*ui.view.w };
+      ui.view.w = clamp(pinch.w * pinch.d/d, 0.25, 40);
+      ui.view.x = before.x - (pinch.cx-r.left)/r.width*ui.view.w;
+      ui.view.y = before.y - (pinch.cy-r.top)/r.width*ui.view.w;
+      drawStage();
+    }
+    return;
+  }
+  const d = ui.drag; if(!d) { showCoord(toWorld(ev)); return; }
+  if(d.mode==="pan"){
+    const r = stage.getBoundingClientRect();
+    ui.view.x = d.vx - (ev.clientX-d.start.cx)/r.width*ui.view.w;
+    ui.view.y = d.vy - (ev.clientY-d.start.cy)/r.width*ui.view.w;
+    drawStage(); return;
+  }
+  const w = toWorld(ev);
+  if(d.mode==="move"){
+    let dx = w.x-d.start.x, dy = w.y-d.start.y;
+    if(d.boxes.length===1){
+      const nb = applySnap({x:d.boxes[0].b.x+dx, y:d.boxes[0].b.y+dy,
+                            w:d.boxes[0].b.w, h:d.boxes[0].b.h}, [d.boxes[0].e.id]);
+      setBox(d.boxes[0].e, nb);
+    } else {
+      ui.guides = [];
+      d.boxes.forEach(({e,b})=> setBox(e, {x:b.x+dx, y:b.y+dy, w:b.w, h:b.h}));
+    }
+  }
+  else if(d.mode==="resize"){
+    const el = d.el, b0 = d.box0, c=[b0.x+b0.w/2, b0.y+b0.h/2];
+    const p = unrot(w, c, el.rot||0), s0 = unrot(d.start, c, el.rot||0);
+    let dx = p.x-s0.x, dy = p.y-s0.y;
+    let nb = {...b0};
+    if(d.h.includes("w")){ nb.x = b0.x+dx; nb.w = b0.w-dx; }
+    if(d.h.includes("e")){ nb.w = b0.w+dx; }
+    if(d.h.includes("n")){ nb.y = b0.y+dy; nb.h = b0.h-dy; }
+    if(d.h.includes("s")){ nb.h = b0.h+dy; }
+    if(nb.w < 0.02){ nb.w = 0.02; }
+    if(nb.h < 0.005){ nb.h = 0.005; }
+    if(el.type==="image" && el.keepAR && el.srcW && el.srcH && d.h.length===2){
+      const ar = el.srcW/el.srcH;
+      nb.h = nb.w/ar;
+      if(d.h.includes("n")) nb.y = b0.y + b0.h - nb.h;
+    }
+    nb = applySnap(nb, [el.id]);
+    if(el.type==="text" && el.fit==="none"){
+      el.cap = clamp(d.cap0 * (nb.h/Math.max(1e-4,b0.h)), 0.01, 4);
+    }
+    setBox(el, nb);
+  }
+  showCoord(w);
+  drawStage();
+});
+
+function endDrag(ev){
+  pointers.delete(ev.pointerId);
+  if(pointers.size<2) pinch = null;
+  if(ui.drag){ const was = ui.drag.mode; ui.drag = null; ui.guides = [];
+    drawStage(); renderProps(); updateStatus();
+    if(was !== "pan" && typeof saveLocal === "function") saveLocal(); }
+}
+stage.addEventListener("pointerup", endDrag);
+stage.addEventListener("pointercancel", endDrag);
+stage.addEventListener("lostpointercapture", endDrag);
+
+stage.addEventListener("wheel", ev=>{
+  ev.preventDefault();
+  const r = stage.getBoundingClientRect();
+  const before = { x: ui.view.x + (ev.clientX-r.left)/r.width*ui.view.w,
+                   y: ui.view.y + (ev.clientY-r.top)/r.width*ui.view.w };
+  const f = Math.exp(ev.deltaY*0.0016);
+  ui.view.w = clamp(ui.view.w*f, 0.25, 40);
+  ui.view.x = before.x - (ev.clientX-r.left)/r.width*ui.view.w;
+  ui.view.y = before.y - (ev.clientY-r.top)/r.width*ui.view.w;
+  drawStage();
+}, {passive:false});
+
+stage.addEventListener("dblclick", ev=>{
+  const el = hitElement(toWorld(ev));
+  if(el){ ui.sel=[el.id]; syncSelection(); showPanel("props"); }
+});
+
+document.addEventListener("keydown", ev=>{
+  const tag = (ev.target.tagName||"").toLowerCase();
+  if(tag==="input"||tag==="textarea"||tag==="select") return;
+  const sel = selEls();
+  if(ev.key==="Escape"){ ui.sel=[]; syncSelection(); drawStage(); return; }
+  if((ev.key==="Delete"||ev.key==="Backspace") && sel.length){ ev.preventDefault(); deleteSel(); return; }
+  if(ev.key.toLowerCase()==="d" && (ev.ctrlKey||ev.metaKey)){ ev.preventDefault(); duplicateSel(); return; }
+  if(ev.key.startsWith("Arrow") && sel.length){
+    ev.preventDefault();
+    const st = ev.shiftKey ? ui.grid*4 : ui.grid;
+    const dx = ev.key==="ArrowLeft"?-st:ev.key==="ArrowRight"?st:0;
+    const dy = ev.key==="ArrowUp"?-st:ev.key==="ArrowDown"?st:0;
+    sel.forEach(e=>{ const b=boxOf(e); setBox(e,{x:b.x+dx,y:b.y+dy,w:b.w,h:b.h}); });
+    drawStage(); renderProps(); updateStatus();
+  }
+});
+
+function showCoord(w){
+  const el = firstSel();
+  const st = document.getElementById("stCoord");
+  if(el){ const b=boxOf(el);
+    st.textContent = `${el.name}  ${U.fmt(b.w)} × ${U.fmt(b.h)} ${U.label()}  @ ${U.fmt(b.x)}, ${U.fmt(b.y)}`;
+  } else {
+    st.textContent = `${U.fmt(w.x)}, ${U.fmt(w.y)} ${U.label()}   ·   ${Math.round(ui.scale)} px/in`;
+  }
+}
+window.addEventListener("resize", ()=>{ drawStage(); });
+
+/* ============================================================================
+   MARKBENCH — panels, image pipeline, laser recipes, export, boot
+   ========================================================================== */
+
+/* ------------------------------------------------------------- materials --- */
+const MATERIALS = {
+  anodized:{ name:"Anodized aluminium — white mark", speed:1200, power:45, freq:40, interval:0.02, passes:1,
+    note:"Anodising is microns thick. Ablate it, don't engrave it. Brown halo or burnt-looking letters means go faster before you drop power." },
+  alumBare:{ name:"Bare / mill aluminium — dark", speed:400, power:85, freq:30, interval:0.012, passes:2,
+    note:"Bare aluminium resists contrast. Two lighter passes read darker than one heavy pass and warp the body less." },
+  ssAnneal:{ name:"Stainless — anneal (black, no depth)", speed:150, power:35, freq:60, interval:0.010, passes:1,
+    note:"Annealing wants heat, not removal. High frequency, slow speed, 1–2 mm out of focus. Grey instead of black means slow down before adding power." },
+  ssEngrave:{ name:"Stainless / carbon steel — engrave", speed:600, power:90, freq:30, interval:0.020, passes:2,
+    note:"In focus, mid frequency. Past 90 % power, add a pass instead." },
+  painted:{ name:"Powder-coated or painted steel", speed:1500, power:40, freq:40, interval:0.030, passes:1,
+    note:"You're removing coating only. Stop when the substrate shows — extra dose scorches a ring around the letters." },
+  brass:{ name:"Brass / bronze", speed:400, power:80, freq:25, interval:0.020, passes:1,
+    note:"Reflective but forgiving. Lower frequency gives a cleaner, deeper cut." },
+  thermo:{ name:"Thermoplastic lock body", speed:1800, power:22, freq:30, interval:0.030, passes:1,
+    note:"Plastic foams rather than cuts. Too much dose melts the edge and closes the letters up. Ventilate." },
+  laminate:{ name:"Laminate / engraving stock", speed:2000, power:20, freq:30, interval:0.030, passes:1,
+    note:"Very light dose. If the core colour isn't showing, add a pass instead of power." },
+  titanium:{ name:"Titanium — colour anneal", speed:500, power:30, freq:60, interval:0.015, passes:1,
+    note:"Colour is almost pure dose. Small speed changes swing the colour — move one trim step at a time." }
+};
+function laserEffective(){
+  const L = doc.laser;
+  if(L.manual) return {speed:L.speed, power:L.power, freq:L.freq, interval:L.interval, passes:L.passes};
+  const m = MATERIALS[L.material], n = L.trim;
+  return { speed: Math.max(20, Math.round(m.speed*Math.pow(0.82,n)/10)*10),
+           power: clamp(Math.round(m.power*Math.pow(1.05,n)), 5, 100),
+           freq:m.freq, interval:m.interval, passes:m.passes };
+}
+
+/* ------------------------------------------------------------ image pipe --- */
+const _imgCache = new Map();
+function loadImg(src){
+  if(_imgCache.has(src)) return Promise.resolve(_imgCache.get(src));
+  return new Promise((res,rej)=>{
+    const im = new Image();
+    im.onload = ()=>{ _imgCache.set(src,im); res(im); };
+    im.onerror = ()=>rej(new Error("image"));
+    im.src = src;
+  });
+}
+function readFile(file){
+  return new Promise((res,rej)=>{
+    const fr = new FileReader();
+    fr.onload = ()=>res(fr.result); fr.onerror = ()=>rej(new Error("read"));
+    fr.readAsDataURL(file);
+  });
+}
+async function ingestImage(el, file){
+  const raw = await readFile(file);
+  el.raw = raw;
+  el.isSvg = /^data:image\/svg/.test(raw);
+  try{
+    const im = await loadImg(raw);
+    el.srcW = im.naturalWidth||300; el.srcH = im.naturalHeight||200;
+  }catch(e){ el.srcW = 300; el.srcH = 200; }
+  if(el.keepAR && el.srcW && el.srcH){
+    const b = boxOf(el);
+    setBox(el, {x:b.x, y:b.y, w:b.w, h:b.w*el.srcH/el.srcW});
+  }
+  el.name = file.name.replace(/\.[^.]+$/,"").slice(0,24) || el.name;
+  await processImage(el);
+}
+async function processImage(el){
+  if(!el.raw) return;
+  if(el.isSvg && el.mode==="original"){
+    el.data = el.raw; el.bytes = Math.round(el.raw.length*0.75); return;
+  }
+  const im = await loadImg(el.raw);
+  const targetW = Math.max(24, Math.min(4000, Math.round(el.w * el.dpi)));
+  const scale = Math.min(1, targetW/(im.naturalWidth||targetW));
+  const W = Math.max(8, Math.round((im.naturalWidth||targetW)*scale));
+  const H = Math.max(8, Math.round((im.naturalHeight||targetW)*scale));
+  const cv = document.createElement("canvas");
+  cv.width = W; cv.height = H;
+  const cx = cv.getContext("2d", {willReadFrequently:true});
+  cx.imageSmoothingQuality = "high";
+  cx.drawImage(im, 0, 0, W, H);
+  if(el.mode!=="original"){
+    const d = cx.getImageData(0,0,W,H), a = d.data;
+    for(let i=0;i<a.length;i+=4){
+      let g = 0.299*a[i] + 0.587*a[i+1] + 0.114*a[i+2];
+      if(el.invert) g = 255-g;
+      if(el.mode==="threshold"){
+        const on = g < el.thresh;                  // dark pixels are the mark
+        a[i]=a[i+1]=a[i+2] = on?0:255;
+        a[i+3] = on ? Math.max(a[i+3],255) : 0;    // white becomes clear
+      } else {
+        a[i]=a[i+1]=a[i+2] = g;
+      }
+    }
+    cx.putImageData(d,0,0);
+  }
+  el.data = cv.toDataURL("image/png");
+  el.bytes = Math.round(el.data.length*0.75);
+}
+
+/* ------------------------------------------------------------ small util --- */
+const $ = id => document.getElementById(id);
+function toast(msg){
+  const t = $("toast"); t.textContent = msg; t.classList.add("show");
+  clearTimeout(toast._t); toast._t = setTimeout(()=>t.classList.remove("show"), 2200);
+}
+function download(name, text, mime){
+  const b = new Blob([text], {type:mime||"application/octet-stream"});
+  const u = URL.createObjectURL(b), a = document.createElement("a");
+  a.href = u; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(u), 5000);
+}
+function setByPath(path, v){
+  const parts = path.split(".");
+  const root = parts.shift();
+  let o = root==="el" ? firstSel() : root==="ui" ? ui : doc;
+  if(!o) return;
+  while(parts.length>1) o = o[parts.shift()];
+  o[parts[0]] = v;
+}
+function getByPath(path){
+  const parts = path.split(".");
+  const root = parts.shift();
+  let o = root==="el" ? firstSel() : root==="ui" ? ui : doc;
+  for(const p of parts){ if(o==null) return undefined; o = o[p]; }
+  return o;
+}
+
+/* -------------------------------------------------------- field builders --- */
+function fLen(label, path, opt){
+  const v = getByPath(path);
+  return `<label class="fld"><span>${label} (${U.label()})</span>
+    <input type="number" step="${U.step()}" ${opt&&opt.min!==undefined?`min="${opt.min}"`:""}
+      value="${U.toDisp(v||0).toFixed(doc.units==="in"?3:2)}" data-bind="${path}" data-kind="len"></label>`;
+}
+function fNum(label, path, step, min, max){
+  return `<label class="fld"><span>${label}</span>
+    <input type="number" step="${step||1}" ${min!==undefined?`min="${min}"`:""} ${max!==undefined?`max="${max}"`:""}
+      value="${getByPath(path)}" data-bind="${path}" data-kind="num"></label>`;
+}
+function fText(label, path){
+  return `<label class="fld"><span>${label}</span>
+    <input type="text" value="${esc(getByPath(path)??"")}" data-bind="${path}"></label>`;
+}
+function fArea(label, path, rows){
+  return `<label class="fld"><span>${label}</span>
+    <textarea rows="${rows||3}" data-bind="${path}">${esc(getByPath(path)??"")}</textarea></label>`;
+}
+function fSel(label, path, opts, kind){
+  const cur = getByPath(path);
+  return `<label class="fld"><span>${label}</span><select data-bind="${path}"${kind?` data-kind="${kind}"`:""}>`
+    + opts.map(o=>{ const [v,t] = Array.isArray(o)?o:[o,o];
+        return `<option value="${esc(v)}"${String(v)===String(cur)?" selected":""}>${esc(t)}</option>`; }).join("")
+    + `</select></label>`;
+}
+function fChk(label, path){
+  return `<label class="chk"><input type="checkbox" ${getByPath(path)?"checked":""}
+    data-bind="${path}" data-kind="bool"><span>${label}</span></label>`;
+}
+function fSeg(label, path, opts){
+  const cur = String(getByPath(path));
+  return `<label class="fld"><span>${label}</span><div class="seg" data-seg="${path}">`
+    + opts.map(([v,t])=>`<button type="button" data-v="${esc(v)}" aria-pressed="${String(v)===cur}">${esc(t)}</button>`).join("")
+    + `</div></label>`;
+}
+function fAnchor(path){
+  const cur = getByPath(path);
+  const ids = ["tl","tc","tr","ml","mc","mr","bl","bc","br"];
+  return `<label class="fld"><span>Anchor to safe area</span><div class="anchor9" data-anchor="${path}">`
+    + ids.map(i=>`<button type="button" data-v="${i}" aria-pressed="${i===cur}" title="${i}"></button>`).join("")
+    + `</div></label>`;
+}
+
+/* ------------------------------------------------------------ right rail --- */
+const RAIL_TABS = [["props","Element"],["design","Stock"],["batch","Batch"],["laser","Laser"],["cloud","Cloud"],["export","Export"]];
+
+function renderRail(){
+  const tabs = `<div class="sec"><div class="body" style="padding-top:10px">
+    <div class="seg scrollx" id="railTabs">${RAIL_TABS.map(([v,t])=>
+      `<button type="button" data-tab="${v}" aria-pressed="${ui.panel===v}">${t}</button>`).join("")}</div>
+  </div></div>`;
+  let body = "";
+  if(ui.panel==="props")  body = panelProps();
+  else if(ui.panel==="design") body = panelDesign();
+  else if(ui.panel==="batch")  body = panelBatch();
+  else if(ui.panel==="laser")  body = panelLaser();
+  else if(ui.panel==="cloud")  body = panelCloud();
+  else body = panelExport();
+  $("railBody").innerHTML = tabs + body;
+  bindPanel($("railBody"));
+  cloudBind($("railBody"));
+}
+function renderProps(){ if(ui.panel==="props") renderRail(); }
+
+/* ---- element properties ---- */
+function panelProps(){
+  const el = firstSel();
+  if(!el) return `<div class="sec"><div class="body"><div class="empty">
+    Nothing selected.<br>Tap an element on the canvas, or add one from Build.</div></div></div>`;
+  const b = boxOf(el);
+  let s = `<section class="sec"><h3>${esc(el.type)} <span class="tag">${esc(el.id.slice(2,7))}</span></h3><div class="body">`;
+  s += `<div class="row">${fText("Name","el.name")}</div>`;
+  s += `<div class="row c2">${fChk("Visible","el.visible")}${fChk("Locked","el.locked")}</div>`;
+  s += `</div></section>`;
+
+  /* position */
+  s += `<section class="sec"><h3>Position &amp; size</h3><div class="body">
+    <div class="row c2" style="align-items:end">
+      ${fAnchor("el.anchor")}
+      <div>
+        <div class="row">${fLen("Offset X","el.ox")}</div>
+        <div class="row" style="margin-bottom:0">${fLen("Offset Y","el.oy")}</div>
+      </div>
+    </div>
+    <div class="row c2">${fLen("Width","el.w")}${fLen("Height","el.h")}</div>
+    <div class="row c2">${fNum("Rotation °","el.rot",1)}
+      <div style="display:flex;align-items:end"><div class="seg" data-rotq style="width:100%">
+        <button type="button" data-v="0">0</button><button type="button" data-v="90">90</button>
+        <button type="button" data-v="180">180</button><button type="button" data-v="270">270</button>
+      </div></div></div>
+    <div class="btnrow split"><button class="btn sm" data-act="fitcontent">Fit to content</button>
+      <button class="btn sm" data-act="fillsafe">Fill safe area</button></div>
+    <p class="hint">Offsets are measured from the anchor point of the safe area, so elements hold their
+      position when you change the label size or padding.</p>
+  </div></section>`;
+
+  if(el.type==="text"){
+    s += `<section class="sec"><h3>Text</h3><div class="body">
+      <div class="row">${fArea("Content","el.text",2)}</div>
+      <div class="tokrow">${["{first}","{last}","{dept}","{n}","{total}","{date}"]
+        .map(t=>`<button class="tok" data-token="${t}">${t}</button>`).join("")}</div>
+      <div class="divider"></div>
+      <div class="row">${fSel("Font","el.font",FONTS)}</div>
+      <div class="row c3">${fChk("Bold","el.bold")}${fChk("Italic","el.italic")}${fChk("All caps","el.caps")}</div>
+      <div class="row c2">${fLen("Cap height","el.cap")}${fNum("Line spacing ×","el.lead",0.05,0.6,4)}</div>
+      <div class="row c2">${fNum("Tracking /1000","el.track",5,-200,600)}${fChk("Knock out (white)","el.invert")}</div>
+      <div class="row">${fSeg("Horizontal","el.align",[["left","Left"],["center","Center"],["right","Right"]])}</div>
+      <div class="row">${fSeg("Vertical","el.valign",[["top","Top"],["middle","Middle"],["bottom","Bottom"]])}</div>
+      <div class="row">${fSel("Auto sizing","el.fit",[["shrink","Shrink to fit box"],["wrapshrink","Wrap + shrink"],
+        ["wrap","Wrap only"],["none","Fixed — box resizes type"]])}</div>
+    </div></section>`;
+  }
+  else if(el.type==="image"){
+    const kb = el.bytes ? (el.bytes/1024).toFixed(el.bytes>1024*100?0:1)+" KB" : "—";
+    s += `<section class="sec"><h3>Graphic <span class="tag">${kb}</span></h3><div class="body">
+      ${el.data?`<img class="thumb" src="${el.data}" alt="">`:`<div class="empty">No image loaded</div>`}
+      <div class="btnrow split" style="margin-top:8px">
+        <button class="btn sm" data-act="pickimg">${el.data?"Replace":"Upload"}</button>
+        <button class="btn sm ghost" data-act="clearimg">Clear</button>
+      </div>
+      <div class="divider"></div>
+      <div class="row">${fSel("Prepare for laser","el.mode",[["threshold","1-bit — black / clear"],
+        ["gray","Greyscale"],["original","Leave as uploaded"]])}</div>
+      ${el.mode==="threshold"?`<div class="row"><label class="fld"><span>Threshold ${el.thresh}</span>
+        <input type="range" min="10" max="245" value="${el.thresh}" data-bind="el.thresh" data-kind="num" data-reproc="1"></label></div>`:""}
+      <div class="row c2">${fSel("Resolution",  "el.dpi",[[300,"300 dpi"],[600,"600 dpi"],[1000,"1000 dpi"]],"num")}
+        ${fSel("Fit","el.fit",[["contain","Keep aspect"],["stretch","Stretch to box"]])}</div>
+      <div class="row c2">${fChk("Invert","el.invert")}${fChk("Lock aspect on resize","el.keepAR")}</div>
+      <p class="hint">The image is resampled to the element's printed size at the chosen resolution and
+        re-encoded, so a 4 MB phone photo becomes a few KB of mark data. 1-bit is what a fibre laser
+        actually marks — clear pixels are skipped entirely.</p>
+    </div></section>`;
+  }
+  else if(el.type==="icon"){
+    s += `<section class="sec"><h3>Symbol</h3><div class="body">
+      <div class="row">${fSel("Symbol","el.icon",Object.keys(ICONS).map(k=>[k,ICON_NAMES[k]]))}</div>
+      <div class="row">${fChk("Knock out (white)","el.invert")}</div>
+      <p class="hint">Symbols are vector outlines, so they export as real paths — no raster, no resolution limit.</p>
+    </div></section>`;
+  }
+  else if(el.type==="shape"){
+    s += `<section class="sec"><h3>Shape</h3><div class="body">
+      <div class="row">${fSeg("Form","el.shape",[["rect","Rectangle"],["ellipse","Ellipse"]])}</div>
+      <div class="row c2">${fChk("Filled","el.filled")}${fLen("Line weight","el.stroke")}</div>
+      ${el.shape==="rect"?`<div class="row">${fLen("Corner radius","el.corner")}</div>`:""}
+      <p class="hint">A filled rectangle a few thousandths tall makes a rule; a tall one behind knocked-out
+        text makes a reverse headline bar.</p>
+    </div></section>`;
+  }
+  return s;
+}
+
+/* ---- stock / geometry ---- */
+function panelDesign(){
+  return `
+  <section class="sec"><h3>Units</h3><div class="body">
+    <div class="seg hot" data-seg="doc.units">
+      <button type="button" data-v="in" aria-pressed="${doc.units==="in"}">Inches</button>
+      <button type="button" data-v="mm" aria-pressed="${doc.units==="mm"}">Millimetres</button>
+    </div>
+    <p class="hint">Work in whichever you like. Exports are always written in millimetres so LightBurn
+      places them at true size.</p>
+  </div></section>
+
+  <section class="sec"><h3>Lock body</h3><div class="body">
+    <div class="row c2">${fLen("Width","doc.lock.w")}${fLen("Height","doc.lock.h")}</div>
+    <div class="row">${fLen("Corner radius","doc.lock.corner")}</div>
+    <p class="hint">Reference silhouette only — it is never marked. It shows you how the label sits on the body.</p>
+  </div></section>
+
+  <section class="sec"><h3>Label / mark area</h3><div class="body">
+    <div class="row c2">${fLen("Width","doc.label.w")}${fLen("Height","doc.label.h")}</div>
+    <div class="row c2">${fLen("Corner radius","doc.label.corner")}${fLen("Edge padding","doc.pad")}</div>
+    <div class="row c2">${fLen("Offset X on body","doc.label.dx")}${fLen("Offset Y on body","doc.label.dy")}</div>
+    <p class="hint">Padding defines the safe area. Elements are clamped inside it, so nothing can drift
+      off the stock when you resize.</p>
+  </div></section>
+
+  <section class="sec"><h3>Grid</h3><div class="body">
+    <div class="row">${fSel("Snap increment","ui.grid",
+      doc.units==="in" ? [[1/32,'1/32"'],[1/16,'1/16"'],[1/8,'1/8"'],[1/4,'1/4"']]
+                       : [[0.5/MM,"0.5 mm"],[1/MM,"1 mm"],[2/MM,"2 mm"],[5/MM,"5 mm"]],"num")}</div>
+    <div class="row c2">${fChk("Show grid","ui.showGrid")}${fChk("Snap","ui.snap")}</div>
+  </div></section>`;
+}
+
+/* ---- batch ---- */
+function panelBatch(){
+  const sh = sheetFaces();
+  const over = doc.sheet.field>0 && (sh.w>doc.sheet.field || sh.h>doc.sheet.field);
+  const perC = Math.max(1, Math.floor((doc.sheet.field+doc.sheet.gapX)/(doc.label.w+doc.sheet.gapX)));
+  const perR = Math.max(1, Math.floor((doc.sheet.field+doc.sheet.gapY)/(doc.label.h+doc.sheet.gapY)));
+  return `
+  <section class="sec"><h3>Roster <span class="tag">${doc.roster.length}</span></h3><div class="body">
+    <div class="roster" id="roster"></div>
+    <div class="btnrow split" style="margin-top:8px">
+      <button class="btn sm" data-act="addrow">Add lock</button>
+      <button class="btn sm ghost" data-act="clearroster">Clear names</button>
+    </div>
+    <div class="divider"></div>
+    <label class="fld"><span>Paste rows — first, last, department</span>
+      <textarea id="csvBox" rows="3" placeholder="Dana, Whitfield, Maintenance"></textarea></label>
+    <div class="btnrow" style="margin-top:6px"><button class="btn sm" data-act="loadcsv">Load pasted rows</button></div>
+    <p class="hint">Preview shows lock ${ui.previewIdx+1}. Tap a row number to preview that one.</p>
+  </div></section>
+
+  <section class="sec"><h3>Sheet layout</h3><div class="body">
+    <div class="row">${fSel("Face order","doc.sheet.order",[["pairs","Both faces, per lock"],
+      ["grouped","All of face 1, then face 2"],...doc.faces.map((f,i)=>["face"+i, f.name+" only"])])}</div>
+    <div class="row c3">${fNum("Columns","doc.sheet.cols",1,1,40)}
+      ${fLen("Gap X","doc.sheet.gapX")}${fLen("Gap Y","doc.sheet.gapY")}</div>
+    <div class="row">${fSel("Lens field","doc.sheet.field",[[110/MM,"110 mm lens — 110 × 110"],
+      [150/MM,"150 mm lens — 150 × 150"],[0,"No limit"]],"num")}</div>
+    <div class="readout">
+      <b>Faces</b><span>${sh.faces.length}</span>
+      <b>Sheet</b><span>${U.fmt(sh.w,2)} × ${U.fmt(sh.h,2)} ${U.label()}</span>
+      <b>Grid</b><span>${sh.cols} × ${sh.rows}</span>
+    </div>
+    ${over?`<div class="callout bad">Sheet is larger than the ${Math.round(doc.sheet.field*MM)} mm field.
+      Mark in batches of ${perC*perR} faces — ${perC} across by ${perR} down.</div>`:""}
+  </div></section>`;
+}
+
+/* ---- laser ---- */
+function panelLaser(){
+  const p = laserEffective(), m = MATERIALS[doc.laser.material];
+  let ladder = "";
+  for(let i=-5;i<=5;i++){
+    const g = Math.round(232-(i+5)*20);
+    ladder += `<div class="${!doc.laser.manual && i===doc.laser.trim?"cur":""}"
+                 style="background:rgb(${g},${g},${g})"></div>`;
+  }
+  return `
+  <section class="sec"><h3>Machine <span class="tag">HL-50E · 50 W</span></h3><div class="body">
+    <div class="row">${fSel("Material","doc.laser.material",Object.entries(MATERIALS).map(([k,v])=>[k,v.name]))}</div>
+    <div class="callout">${esc(m.note)}</div>
+  </div></section>
+
+  <section class="sec"><h3>How did the mark come out?</h3><div class="body">
+    <div class="btnrow split">
+      <button class="btn" data-act="lighter">Too dark</button>
+      <button class="btn" data-act="darker">Too light</button>
+    </div>
+    <div class="ladder">${ladder}</div>
+    <div class="laddercap"><span>Lighter</span>
+      <span>${doc.laser.manual?"Manual":doc.laser.trim===0?"Preset":(doc.laser.trim>0?"+":"")+doc.laser.trim}</span>
+      <span>Darker</span></div>
+    <div class="btnrow" style="margin-top:8px"><button class="btn sm ghost wide" data-act="resettrim">Back to preset</button></div>
+    <div class="readout">
+      <b>Speed</b><span>${p.speed} mm/s</span>
+      <b>Power</b><span>${p.power} %</span>
+      <b>Frequency</b><span>${p.freq} kHz</span>
+      <b>Line interval</b><span>${p.interval} mm</span>
+      <b>Passes</b><span>${p.passes}</span>
+      <b>Layer</b><span>${doc.laser.fill==="cut"?"Line":"Fill"}</span>
+    </div>
+    ${doc.laser.trim>=4?`<div class="callout bad">You're at the top of the ladder. Add a pass or change
+      material rather than pushing further.</div>`:""}
+    ${doc.laser.trim<=-4?`<div class="callout bad">You're at the bottom. If it still marks too dark the
+      beam is likely out of focus, or it's the wrong preset.</div>`:""}
+  </div></section>
+
+  <section class="sec"><h3>Manual override</h3><div class="body">
+    <div class="row c3">${fNum("Speed mm/s","doc.laser.speed",10,10)}
+      ${fNum("Power %","doc.laser.power",1,1,100)}${fNum("Freq kHz","doc.laser.freq",1,1,200)}</div>
+    <div class="row c3">${fNum("Interval mm","doc.laser.interval",0.005,0.005)}
+      ${fNum("Passes","doc.laser.passes",1,1,20)}
+      ${fSel("Mode","doc.laser.fill",[["scan","Fill"],["cut","Line"]])}</div>
+    <div class="btnrow"><button class="btn sm wide" data-act="testgrid">Download 4 × 4 parameter test grid</button></div>
+    <p class="hint">The grid marks sixteen squares, each on its own LightBurn layer, sweeping speed against
+      power around your current numbers. Run it on a scrap body, pick the square you like, type those in.</p>
+  </div></section>`;
+}
+
+/* ---- export ---- */
+function panelExport(){
+  const sh = sheetFaces();
+  const hasImg = doc.faces.some(f=>f.els.some(e=>e.type==="image" && e.data));
+  const issues = fitIssues();
+  return `
+  <section class="sec"><h3>Export</h3><div class="body">
+    <div class="readout">
+      <b>Faces on sheet</b><span>${sh.faces.length}</span>
+      <b>Sheet size</b><span>${r3(sh.w*MM)} × ${r3(sh.h*MM)} mm</span>
+      <b>Locks</b><span>${doc.roster.length}</span>
+    </div>
+    ${issues.length?`<div class="callout bad">Outside the safe area: ${esc(issues.slice(0,3).join(", "))}
+      ${issues.length>3?" +"+(issues.length-3)+" more":""}</div>`:""}
+    <div class="btnrow split" style="margin-top:10px">
+      <button class="btn pri" data-act="exlbrn">.lbrn</button>
+      <button class="btn pri" data-act="exsvg">.svg</button>
+    </div>
+    ${hasImg?`<div class="callout">This design contains a raster graphic. The SVG carries the image;
+      the .lbrn carries a guide box for it on a no-output layer. For logos, export SVG and import that —
+      or import the logo separately in LightBurn and drop it in the box.</div>`:""}
+    <div class="divider"></div>
+    <div class="btnrow split">
+      <button class="btn sm" data-act="savejson">Save project</button>
+      <button class="btn sm" data-act="loadjson">Open project</button>
+    </div>
+    <div class="btnrow" style="margin-top:6px">
+      <button class="btn sm wide" data-act="${cloud.state==="ready"?"cloudput":"gocloud"}">
+        ${cloud.state==="ready"?"Save to the shop library":"Set up shared cloud storage"}</button>
+    </div>
+    <div class="btnrow" style="margin-top:6px">
+      <button class="btn sm ghost dngr wide" data-act="reset">Reset to the starting layout</button>
+    </div>
+    <p class="hint">Your work is kept in this browser between visits. Save a project file to move it to
+      another machine or to keep more than one design.</p>
+    <p class="hint">The .lbrn arrives with your material layer already set — speed, power, frequency,
+      interval and passes — and every face grouped. Check the first one on screen before you run a batch:
+      LightBurn's text anchoring shifts a little between versions.</p>
+  </div></section>
+
+  <section class="sec"><h3>Faces</h3><div class="body">
+    ${doc.faces.map((f,i)=>`<div class="layer"><span class="nm">${esc(f.name)}</span>
+      <span class="pill">${f.els.length} el</span></div>`).join("")}
+  </div></section>`;
+}
+
+/* ------------------------------------------------------- panel behaviour --- */
+function bindPanel(root){
+  root.querySelectorAll("[data-bind]").forEach(inp=>{
+    const ev = (inp.type==="checkbox"||inp.tagName==="SELECT") ? "change" : "input";
+    inp.addEventListener(ev, async ()=>{
+      const path = inp.dataset.bind, kind = inp.dataset.kind||"raw";
+      let v;
+      if(kind==="bool") v = inp.checked;
+      else if(kind==="len") v = U.fromDisp(parseFloat(inp.value)||0);
+      else if(kind==="num") v = parseFloat(inp.value)||0;
+      else v = inp.value;
+      if(path.startsWith("ui.")){
+        if(kind==="raw" && typeof v==="string" && v.trim()!=="" && isFinite(+v)) v = +v;
+        ui[path.slice(3)] = v; drawStage(); return;
+      }
+      setByPath(path, v);
+      if(inp.dataset.reproc){ const el=firstSel(); if(el){ await processImage(el); } }
+      await afterEdit(path);
+    });
+  });
+  root.querySelectorAll("[data-seg]").forEach(seg=>{
+    seg.addEventListener("click", async e=>{
+      const b = e.target.closest("button[data-v]"); if(!b) return;
+      const path = seg.dataset.seg, v = b.dataset.v;
+      [...seg.children].forEach(c=>c.setAttribute("aria-pressed", c===b));
+      if(path==="doc.units"){ doc.units = v; renderRail(); drawStage(); updateStatus(); return; }
+      setByPath(path, v);
+      await afterEdit(path);
+    });
+  });
+  root.querySelectorAll("[data-anchor]").forEach(a=>{
+    a.addEventListener("click", e=>{
+      const b = e.target.closest("button[data-v]"); if(!b) return;
+      const el = firstSel(); if(!el) return;
+      reanchor(el, b.dataset.v);
+      renderRail(); drawStage();
+    });
+  });
+  const rq = root.querySelector("[data-rotq]");
+  if(rq) rq.addEventListener("click", e=>{
+    const b = e.target.closest("button[data-v]"); if(!b) return;
+    const el = firstSel(); if(!el) return;
+    el.rot = parseFloat(b.dataset.v); renderRail(); drawStage();
+  });
+  root.querySelectorAll("[data-token]").forEach(t=>{
+    t.addEventListener("click", ()=>{
+      const el = firstSel(); if(!el || el.type!=="text") return;
+      const ta = root.querySelector('textarea[data-bind="el.text"]');
+      const pos = ta ? ta.selectionStart : el.text.length;
+      el.text = el.text.slice(0,pos) + t.dataset.token + el.text.slice(pos);
+      renderRail(); drawStage();
+    });
+  });
+  root.querySelectorAll("#railTabs button").forEach(b=>{
+    b.addEventListener("click", ()=>{ ui.panel = b.dataset.tab; renderRail(); syncNav(); });
+  });
+  root.querySelectorAll("[data-act]").forEach(b=> b.addEventListener("click", ()=>action(b.dataset.act)));
+  if(root.querySelector("#roster")) renderRoster();
+}
+
+async function afterEdit(path){
+  if(path.startsWith("doc.label")||path==="doc.pad"||path.startsWith("doc.lock")) reflowAll();
+  const el = firstSel();
+  if(el && path.startsWith("el.")){
+    if(path==="el.w"||path==="el.h") setBox(el, boxOf(el));
+    if(el.type==="image" && (path==="el.dpi"||path==="el.mode"||path==="el.invert"||path==="el.w"||path==="el.h")){
+      await processImage(el);
+    }
+  }
+  drawStage(); updateStatus(); renderLayers(); saveLocal();
+  if(path.startsWith("doc.sheet")||path.startsWith("doc.laser")||path==="doc.pad"||path.startsWith("doc.label")){
+    if(ui.panel==="batch"||ui.panel==="laser"||ui.panel==="export") renderRail();
+  }
+}
+
+/* ------------------------------------------------------------- actions --- */
+async function action(a){
+  if(/^(cloud|pull|push|addperson|savepreset)/.test(a)) return cloudAction(a);
+  const el = firstSel();
+  switch(a){
+    case "pickimg": {
+      if(!el) return;
+      const f = $("fileImg");
+      f.value = "";
+      f.onchange = async ()=>{ if(f.files[0]){ await ingestImage(el, f.files[0]); renderRail(); drawStage(); renderLayers(); toast("Graphic loaded and compressed"); } };
+      f.click(); break;
+    }
+    case "clearimg": if(el){ el.raw=el.data=null; el.bytes=0; renderRail(); drawStage(); } break;
+    case "fitcontent": {
+      if(!el) return;
+      const b = boxOf(el);
+      if(el.type==="text"){
+        const L = layoutText(el, {...b, w:safeRect().w}, rosterCtx(ui.previewIdx));
+        setBox(el, {x:b.x, y:b.y, w:Math.min(safeRect().w, L.maxW*1.02), h:L.totH*1.05});
+      } else if(el.type==="image" && el.srcW){
+        setBox(el, {x:b.x, y:b.y, w:b.w, h:b.w*el.srcH/el.srcW});
+      }
+      renderRail(); drawStage(); break;
+    }
+    case "fillsafe": { if(!el) return; const s=safeRect(); setBox(el,{x:s.x,y:s.y,w:s.w,h:s.h}); renderRail(); drawStage(); break; }
+    case "addrow": doc.roster.push({first:"",last:"",dept:""}); renderRail(); drawStage(); break;
+    case "clearroster": doc.roster = doc.roster.map(()=>({first:"",last:"",dept:""})); renderRail(); drawStage(); break;
+    case "gocloud": showPanel("cloud"); break;
+    case "reset": if(confirm("Discard this design and start from the default layout?")) resetDoc(); break;
+    case "loadcsv": {
+      const rows = ($("csvBox").value||"").split("\n").map(r=>r.split(/[,\t]/).map(s=>s.trim()))
+                     .filter(r=>r.join("").length);
+      if(!rows.length){ toast("Nothing to load"); return; }
+      doc.roster = rows.map(r=>({first:r[0]||"", last:r[1]||"", dept:r[2]||""}));
+      ui.previewIdx = 0; renderRail(); drawStage(); toast(rows.length+" locks loaded"); break;
+    }
+    case "lighter": doc.laser.manual=false; doc.laser.trim=clamp(doc.laser.trim-1,-5,5); renderRail(); break;
+    case "darker":  doc.laser.manual=false; doc.laser.trim=clamp(doc.laser.trim+1,-5,5); renderRail(); break;
+    case "resettrim": doc.laser.manual=false; doc.laser.trim=0; renderRail(); break;
+    case "testgrid": download("hl50e-test-grid.lbrn", testGrid(), "application/xml"); toast("Test grid saved"); break;
+    case "exsvg": download(fileStem()+".svg", exportSVG(), "image/svg+xml"); toast("SVG saved"); break;
+    case "exlbrn": download(fileStem()+".lbrn", exportLBRN(), "application/xml"); toast("LightBurn file saved"); break;
+    case "savejson": download(fileStem()+".json", JSON.stringify(doc), "application/json"); toast("Project saved"); break;
+    case "loadjson": {
+      const f = $("fileJson"); f.value="";
+      f.onchange = ()=>{
+        const file = f.files[0]; if(!file) return;
+        const fr = new FileReader();
+        fr.onload = ()=>{ try{
+            const d = JSON.parse(fr.result);
+            if(!d.faces) throw new Error("shape");
+            doc = d; ui.faceIdx=0; ui.sel=[]; ui.previewIdx=0;
+            reflowAll(); buildAll(); fitView(); toast("Project opened");
+          }catch(e){ toast("That file isn't a Markbench project"); } };
+        fr.readAsText(file);
+      };
+      f.click(); break;
+    }
+  }
+}
+function fileStem(){
+  return (doc.name||"markbench").toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"")
+    + "-" + doc.roster.length + "up";
+}
+
+/* ------------------------------------------------------------- test grid --- */
+function testGrid(){
+  const base = laserEffective();
+  const sp = [0.6,0.85,1.15,1.5].map(k=>Math.max(20,Math.round(base.speed*k/10)*10));
+  const pw = [0.7,0.85,1.0,1.15].map(k=>clamp(Math.round(base.power*k),5,100));
+  const cell=8, gap=2, lw=11, lh=6;
+  const W = lw+4*(cell+gap), H = lh+4*(cell+gap);
+  let s = `<?xml version="1.0" encoding="UTF-8"?>\n<LightBurnProject AppVersion="1.7.00" `
+    + `DeviceName="Haas HL-50E" FormatVersion="1" MaterialHeight="0" MirrorX="False" MirrorY="False">\n`;
+  let i=0;
+  for(let r=0;r<4;r++) for(let c=0;c<4;c++)
+    s += lbCut(i++, `${sp[c]} mm/s · ${pw[r]}%`,
+      {speed:sp[c],power:pw[r],freq:base.freq,passes:base.passes,interval:base.interval}, false, true);
+  const LBL = i;
+  s += lbCut(LBL, "Labels", {speed:1000,power:Math.min(60,base.power),freq:base.freq,passes:1,interval:base.interval}, false, true);
+  i=0;
+  for(let r=0;r<4;r++) for(let c=0;c<4;c++){
+    const x = lw+c*(cell+gap), y = lh+r*(cell+gap);
+    s += `  <Shape Type="Rect" CutIndex="${i++}" W="${cell}" H="${cell}" Cr="0">\n`
+       + `    <XForm>1 0 0 1 ${r3(x+cell/2)} ${r3(H-(y+cell/2))}</XForm>\n  </Shape>\n`;
+  }
+  for(let c=0;c<4;c++)
+    s += `  <Shape Type="Text" CutIndex="${LBL}" Font="Arial" Str="${sp[c]}" H="2.5" LS="0" LnS="0" `
+       + `Ah="1" Av="0" Bold="1" Italic="0" Weld="0" HasBackupPath="0">\n`
+       + `    <XForm>1 0 0 1 ${r3(lw+c*(cell+gap)+cell/2)} ${r3(H-lh+1.6)}</XForm>\n  </Shape>\n`;
+  for(let r=0;r<4;r++)
+    s += `  <Shape Type="Text" CutIndex="${LBL}" Font="Arial" Str="${pw[r]}%" H="2.5" LS="0" LnS="0" `
+       + `Ah="2" Av="0" Bold="1" Italic="0" Weld="0" HasBackupPath="0">\n`
+       + `    <XForm>1 0 0 1 ${r3(lw-1.6)} ${r3(H-(lh+r*(cell+gap)+cell/2+1.2))}</XForm>\n  </Shape>\n`;
+  return s + `</LightBurnProject>\n`;
+}
+
+/* --------------------------------------------------------------- left rail --- */
+const PALETTE = [
+  ["text","Text", `<path d="M4 6h16M12 6v13M8 19h8"/>`],
+  ["image","Graphic", `<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="8.5" cy="10" r="1.6"/><path d="M4 17l5-4 4 3 3-2 4 3"/>`],
+  ["icon","Symbol", `<path d="M12 3L22 20H2z"/><path d="M12 10v4M12 17.2v.1"/>`],
+  ["shape","Rule / bar", `<rect x="3" y="10" width="18" height="4" rx="1"/>`]
+];
+function buildPalette(){
+  $("palette").innerHTML = PALETTE.map(([t,label,path])=>
+    `<button class="btn" data-add="${t}"><svg viewBox="0 0 24 24">${path}</svg>${label}</button>`).join("");
+  $("palette").querySelectorAll("[data-add]").forEach(b=>
+    b.addEventListener("click", ()=>addElement(b.dataset.add)));
+}
+function addElement(type){
+  const s = safeRect();
+  const mk = {text:textEl, image:imageEl, icon:iconEl, shape:shapeEl}[type];
+  const el = mk({ anchor:"mc", ox:0, oy:0 });
+  if(type==="text"){ el.w = s.w*0.9; el.h = 0.18; el.text = "New text"; }
+  if(type==="shape"){ el.w = s.w*0.9; el.h = 0.015; el.name = "Rule"; }
+  if(type==="icon"){ el.w = Math.min(s.w*0.5, 0.5); el.h = el.w*0.88; }
+  if(type==="image"){ el.w = Math.min(s.w*0.8, 0.9); el.h = el.w*0.4; }
+  setBox(el, boxOf(el));
+  face().els.push(el);
+  ui.sel = [el.id];
+  buildAll();
+  ui.panel = "props"; renderRail(); syncNav();
+  if(type==="image") action("pickimg");
+}
+function duplicateSel(){
+  const add = [];
+  selEls().forEach(e=>{
+    const c = JSON.parse(JSON.stringify(e));
+    c.id = uid("e_"); c.name = e.name+" copy"; c.ox += ui.grid*2; c.oy += ui.grid*2;
+    setBox(c, boxOf(c)); add.push(c);
+  });
+  if(!add.length) return;
+  face().els.push(...add);
+  ui.sel = add.map(a=>a.id);
+  buildAll();
+}
+function deleteSel(){
+  if(!ui.sel.length) return;
+  face().els = face().els.filter(e=>!ui.sel.includes(e.id));
+  ui.sel = []; buildAll();
+}
+const LAYER_ICON = {
+  text:`<path d="M4 6h16M12 6v13M8 19h8"/>`,
+  image:`<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M4 17l5-4 4 3 3-2 4 3"/>`,
+  icon:`<path d="M12 3L22 20H2z"/>`,
+  shape:`<rect x="3" y="10" width="18" height="4" rx="1"/>`
+};
+function renderLayers(){
+  const els = face().els;
+  $("elCount").textContent = els.length;
+  $("layers").innerHTML = els.length ? els.slice().reverse().map(el=>`
+    <div class="layer" data-id="${el.id}" aria-selected="${ui.sel.includes(el.id)}">
+      <svg class="ic" viewBox="0 0 24 24">${LAYER_ICON[el.type]||""}</svg>
+      <span class="nm">${esc(el.name)}</span>
+      <button class="mini" data-vis="${el.id}" data-off="${el.visible?0:1}" title="Show / hide">${el.visible?"◉":"○"}</button>
+      <button class="mini" data-lk="${el.id}" data-off="${el.locked?0:1}" title="Lock">${el.locked?"▣":"▢"}</button>
+      <button class="mini" data-up="${el.id}" title="Bring forward">▲</button>
+      <button class="mini" data-dn="${el.id}" title="Send back">▼</button>
+    </div>`).join("") : `<div class="empty">No elements on this face yet</div>`;
+  $("layers").querySelectorAll(".layer").forEach(row=>{
+    row.addEventListener("click", ev=>{
+      if(ev.target.closest("button")) return;
+      const id = row.dataset.id;
+      ui.sel = ev.shiftKey ? (ui.sel.includes(id)?ui.sel.filter(x=>x!==id):[...ui.sel,id]) : [id];
+      syncSelection(); drawStage();
+    });
+  });
+  const els2 = face().els;
+  $("layers").querySelectorAll("[data-vis]").forEach(b=>b.addEventListener("click",()=>{
+    const el = els2.find(e=>e.id===b.dataset.vis); el.visible = !el.visible; buildAll(); }));
+  $("layers").querySelectorAll("[data-lk]").forEach(b=>b.addEventListener("click",()=>{
+    const el = els2.find(e=>e.id===b.dataset.lk); el.locked = !el.locked; buildAll(); }));
+  $("layers").querySelectorAll("[data-up]").forEach(b=>b.addEventListener("click",()=>move(b.dataset.up, 1)));
+  $("layers").querySelectorAll("[data-dn]").forEach(b=>b.addEventListener("click",()=>move(b.dataset.dn,-1)));
+}
+function move(id, dir){
+  const a = face().els, i = a.findIndex(e=>e.id===id), j = i+dir;
+  if(i<0||j<0||j>=a.length) return;
+  [a[i],a[j]] = [a[j],a[i]];
+  buildAll();
+}
+
+/* alignment ------------------------------------------------------------- */
+function doAlign(kind){
+  const sel = selEls(); if(!sel.length) return;
+  const s = safeRect();
+  let ref = s;
+  if(sel.length>1){
+    const bs = sel.map(boxOf);
+    ref = { x:Math.min(...bs.map(b=>b.x)), y:Math.min(...bs.map(b=>b.y)) };
+    ref.w = Math.max(...bs.map(b=>b.x+b.w)) - ref.x;
+    ref.h = Math.max(...bs.map(b=>b.y+b.h)) - ref.y;
+  }
+  if(kind==="stack"){
+    const bs = sel.map(e=>({e, b:boxOf(e)})).sort((p,q)=>p.b.y-q.b.y);
+    const totH = bs.reduce((a,x)=>a+x.b.h,0);
+    const gap = bs.length>1 ? (s.h-totH)/(bs.length-1) : 0;
+    let y = s.y;
+    bs.forEach(({e,b})=>{ setBox(e,{x:b.x,y,w:b.w,h:b.h}); y += b.h + gap; });
+  } else if(kind==="fitwidth"){
+    sel.forEach(e=>{ const b=boxOf(e); setBox(e,{x:s.x,y:b.y,w:s.w,h:b.h}); });
+  } else sel.forEach(e=>{
+    const b = boxOf(e);
+    if(kind==="left") b.x = ref.x;
+    if(kind==="right") b.x = ref.x+ref.w-b.w;
+    if(kind==="hcenter") b.x = ref.x+(ref.w-b.w)/2;
+    if(kind==="top") b.y = ref.y;
+    if(kind==="bottom") b.y = ref.y+ref.h-b.h;
+    if(kind==="vcenter") b.y = ref.y+(ref.h-b.h)/2;
+    setBox(e,b);
+  });
+  buildAll();
+}
+
+/* ------------------------------------------------------------------ faces --- */
+function renderFaceTabs(){
+  $("faceTabs").innerHTML = doc.faces.map((f,i)=>
+    `<button class="facetab" role="tab" data-f="${i}" aria-selected="${i===ui.faceIdx}">${esc(f.name)}</button>`).join("")
+    + `<button class="facetab add" data-addface="1" title="Add face">+</button>`;
+  $("faceTabs").querySelectorAll("[data-f]").forEach(b=>b.addEventListener("click",()=>{
+    if(ui.faceIdx===+b.dataset.f){ const n = prompt("Rename face", doc.faces[ui.faceIdx].name);
+      if(n){ doc.faces[ui.faceIdx].name = n.slice(0,20); } }
+    ui.faceIdx = +b.dataset.f; ui.sel=[]; buildAll(); fitView();
+  }));
+  $("faceTabs").querySelector("[data-addface]").addEventListener("click", ()=>{
+    doc.faces.push({id:uid("f_"), name:"Side "+(doc.faces.length+1), els:[]});
+    ui.faceIdx = doc.faces.length-1; ui.sel=[]; buildAll(); fitView();
+  });
+}
+
+/* ------------------------------------------------------------------ roster --- */
+function renderRoster(){
+  const host = $("roster"); if(!host) return;
+  host.innerHTML = doc.roster.map((r,i)=>`
+    <div class="rrow" data-i="${i}">
+      <button class="n" data-prev="${i}" title="Preview this lock"
+        style="color:${i===ui.previewIdx?"var(--accent)":""}">${i+1}</button>
+      <input class="f" type="text" placeholder="First" value="${esc(r.first)}" data-k="first">
+      <input class="l" type="text" placeholder="Last" value="${esc(r.last)}" data-k="last">
+      <input class="d" type="text" placeholder="Department" value="${esc(r.dept)}" data-k="dept">
+      <button class="x" data-del="${i}">✕</button>
+    </div>`).join("");
+  host.querySelectorAll(".rrow").forEach(row=>{
+    const i = +row.dataset.i;
+    row.querySelectorAll("input").forEach(inp=> inp.addEventListener("input", ()=>{
+      doc.roster[i][inp.dataset.k] = inp.value;
+      saveLocal();
+      if(i===ui.previewIdx) drawStage();
+    }));
+  });
+  host.querySelectorAll("[data-prev]").forEach(b=>b.addEventListener("click",()=>{
+    ui.previewIdx = +b.dataset.prev; renderRail(); drawStage(); }));
+  host.querySelectorAll("[data-del]").forEach(b=>b.addEventListener("click",()=>{
+    if(doc.roster.length<=1) return;
+    doc.roster.splice(+b.dataset.del,1);
+    ui.previewIdx = Math.min(ui.previewIdx, doc.roster.length-1);
+    renderRail(); drawStage(); }));
+}
+
+/* --------------------------------------------------------------- statusbar --- */
+function updateStatus(){
+  const sh = sheetFaces(), issues = fitIssues();
+  const f = $("stFit");
+  if(issues.length){ f.className="warn"; f.textContent = issues.length+" outside safe area"; }
+  else { f.className="good"; f.textContent = "Inside limits"; }
+  $("stSheet").textContent =
+    `${sh.faces.length} faces · ${r3(sh.w*MM)}×${r3(sh.h*MM)} mm · ${doc.roster.length} locks`;
+  $("docName").textContent = doc.name + " · " + face().name;
+}
+
+/* ------------------------------------------------------------------- glue --- */
+function syncSelection(){ renderLayers(); renderProps(); showCoord({x:0,y:0}); }
+function buildAll(){ renderFaceTabs(); renderLayers(); renderRail(); drawStage(); updateStatus(); saveLocal(); }
+
+function showPanel(p){
+  ui.panel = p; renderRail(); syncNav();
+  if(window.matchMedia("(max-width:1079px)").matches){
+    $("leftrail").classList.remove("open");
+    $("rightrail").classList.add("open");
+    $("scrim").classList.add("show");
+  }
+}
+function syncNav(){
+  document.querySelectorAll("#nav button").forEach(b=>{
+    const n = b.dataset.nav;
+    const on = n==="build" ? $("leftrail").classList.contains("open")
+             : n==="stage" ? !$("leftrail").classList.contains("open") && !$("rightrail").classList.contains("open")
+             : $("rightrail").classList.contains("open") && ui.panel===n;
+    b.setAttribute("aria-pressed", on);
+  });
+}
+function closeSheets(){
+  $("leftrail").classList.remove("open");
+  $("rightrail").classList.remove("open");
+  $("scrim").classList.remove("show");
+  syncNav();
+}
+
+/* ----------------------------------------------------------- local restore --- */
+const STORE_KEY = "markbench.doc.v2";
+let _saveT = null;
+function saveLocal(){
+  clearTimeout(_saveT);
+  _saveT = setTimeout(()=>{
+    try{ localStorage.setItem(STORE_KEY, JSON.stringify(doc)); }catch(e){}
+  }, 700);
+}
+function restoreLocal(){
+  try{
+    const raw = localStorage.getItem(STORE_KEY);
+    if(!raw) return false;
+    const d = JSON.parse(raw);
+    if(!d || !Array.isArray(d.faces) || !d.faces.length) return false;
+    doc = d; reflowAll(); return true;
+  }catch(e){ return false; }
+}
+function resetDoc(){
+  doc = defaultDoc(); ui.faceIdx=0; ui.sel=[]; ui.previewIdx=0;
+  try{ localStorage.removeItem(STORE_KEY); }catch(e){}
+  buildAll(); fitView(); toast("Reset to the starting layout");
+}
+
+/* --------------------------------------------------------------------- boot */
+function boot(){
+  const restored = restoreLocal();
+  buildPalette();
+  buildAll();
+  if(restored) setTimeout(()=>toast("Picked up where you left off"), 400);
+
+  document.querySelectorAll("[data-align]").forEach(b=>
+    b.addEventListener("click", ()=>doAlign(b.dataset.align)));
+  $("btnDup").addEventListener("click", duplicateSel);
+  $("btnDel").addEventListener("click", deleteSel);
+
+  const tog = (id, key, fn) => {
+    const b = $(id);
+    const set = ()=> b.setAttribute("aria-pressed", ui[key]);
+    b.addEventListener("click", ()=>{ ui[key] = !ui[key]; set(); (fn||drawStage)(); });
+    set();
+  };
+  tog("tGrid","showGrid"); tog("tSnap","snap");
+  tog("tLock","showLock"); tog("tRule","showRule", ()=>{ drawStage(); });
+  $("tFit").addEventListener("click", fitView);
+
+  document.querySelectorAll("#nav button").forEach(b=>b.addEventListener("click", ()=>{
+    const n = b.dataset.nav;
+    if(n==="stage"){ closeSheets(); return; }
+    if(n==="build"){
+      const open = $("leftrail").classList.contains("open");
+      closeSheets();
+      if(!open){ $("leftrail").classList.add("open"); $("scrim").classList.add("show"); }
+      syncNav(); return;
+    }
+    const same = $("rightrail").classList.contains("open") && ui.panel===n;
+    closeSheets();
+    if(!same) showPanel(n);
+  }));
+  $("scrim").addEventListener("click", closeSheets);
+  document.querySelectorAll(".sheetgrip").forEach(g=>g.addEventListener("click", closeSheets));
+  $("btnExport").addEventListener("click", ()=>showPanel("export"));
+  $("docName").style.cursor = "pointer";
+  $("docName").title = "Rename";
+  $("docName").addEventListener("click", ()=>{
+    const n = prompt("Project name", doc.name);
+    if(n && n.trim()){ doc.name = n.trim().slice(0,40); updateStatus(); saveLocal(); }
+  });
+
+  cloudBoot();
+
+  const ro = new ResizeObserver(()=>drawStage());
+  ro.observe($("stagewrap"));
+  requestAnimationFrame(()=>{ fitView(); syncNav(); });
+}
+document.addEventListener("DOMContentLoaded", boot);
+if(document.readyState!=="loading") boot();
+
+/* ============================================================================
+   MARKBENCH — cloud layer (Firebase / Firestore)
+
+   Optional by design. With no config the app is exactly what it was: a single
+   offline file. Configure it and the shop shares one library of designs,
+   one people roster, and one set of proven laser recipes.
+
+   Collections
+     workspaces/{ws}/designs/{id}            metadata only  — cheap to list
+     workspaces/{ws}/designs/{id}/body/main  the design payload
+     workspaces/{ws}/people/{id}             shared roster
+     workspaces/{ws}/presets/{id}            saved laser recipes
+   ========================================================================== */
+
+const FB_VERSION = "12.11.0";
+const FB_CDN = "https://www.gstatic.com/firebasejs/" + FB_VERSION;
+
+/* Commit your project's web config here and everyone who loads the page is
+   connected with no setup. Leaving it blank makes the app ask for it once and
+   remember it in the browser. A Firebase web apiKey is an identifier, not a
+   secret — access is controlled by your Firestore rules. */
+const FIREBASE_BUILTIN = {
+  apiKey: "",
+  authDomain: "",
+  projectId: "",
+  appId: "",
+  storageBucket: "",
+  messagingSenderId: "",
+  workspace: "shop",
+  authMode: "anonymous"        // "anonymous" | "google"
+};
+
+const CFG_KEY = "markbench.firebase";
+const FS_DOC_LIMIT = 1048487;
+
+const cloud = {
+  state:"off",            // off | connecting | ready | error
+  err:null, uid:null, who:"",
+  fb:null, db:null, auth:null,
+  designs:[], people:[], presets:[],
+  curId:null, curName:"", busy:false, unsub:[]
+};
+
+function cloudCfg(){
+  let saved = null;
+  try{ saved = JSON.parse(localStorage.getItem(CFG_KEY) || "null"); }catch(e){}
+  const c = Object.assign({}, FIREBASE_BUILTIN, saved || {});
+  return c;
+}
+function cloudConfigured(c){ c = c || cloudCfg(); return !!(c.apiKey && c.projectId && c.appId); }
+function saveCloudCfg(c){ try{ localStorage.setItem(CFG_KEY, JSON.stringify(c)); }catch(e){} }
+
+/* single indirection point for the SDK import — lets the module be exercised
+   without a network, and lets you swap in vendored SDK files if gstatic is blocked */
+let fbImport = (url) => import(url);
+
+async function cloudConnect(){
+  const c = cloudCfg();
+  if(!cloudConfigured(c)){ cloud.state="off"; renderCloud(); return; }
+  cloud.state = "connecting"; cloud.err = null; renderCloud();
+  try{
+    const [app, auth, fs] = await Promise.all([
+      fbImport(`${FB_CDN}/firebase-app.js`),
+      fbImport(`${FB_CDN}/firebase-auth.js`),
+      fbImport(`${FB_CDN}/firebase-firestore.js`)
+    ]);
+    cloud.fb = { app, auth, fs };
+    const a = app.initializeApp({
+      apiKey:c.apiKey, authDomain:c.authDomain, projectId:c.projectId,
+      appId:c.appId, storageBucket:c.storageBucket, messagingSenderId:c.messagingSenderId
+    });
+    cloud.auth = auth.getAuth(a);
+    cloud.db = fs.getFirestore(a);
+
+    if(c.authMode === "google"){
+      const cur = cloud.auth.currentUser;
+      if(!cur) await auth.signInWithPopup(cloud.auth, new auth.GoogleAuthProvider());
+    } else {
+      await auth.signInAnonymously(cloud.auth);
+    }
+    const u = cloud.auth.currentUser;
+    cloud.uid = u ? u.uid : null;
+    cloud.who = u && u.email ? u.email : (u ? "device " + u.uid.slice(0,6) : "");
+    cloud.state = "ready";
+    cloudListen();
+  }catch(e){
+    cloud.state = "error";
+    cloud.err = friendlyCloudError(e);
+  }
+  renderCloud();
+}
+function friendlyCloudError(e){
+  const m = String(e && (e.code || e.message) || e);
+  if(/Failed to fetch|dynamically imported|NetworkError|import/i.test(m))
+    return "Couldn't load the Firebase SDK. Your network is probably blocking gstatic.com — "
+         + "ask IT to allow it, or vendor the SDK files into the repo.";
+  if(/auth\/operation-not-allowed/.test(m))
+    return "Sign-in method isn't enabled. In the Firebase console open Authentication → Sign-in method "
+         + "and enable " + (cloudCfg().authMode==="google" ? "Google." : "Anonymous.");
+  if(/auth\/unauthorized-domain/.test(m))
+    return "This domain isn't authorised. Add it under Authentication → Settings → Authorized domains.";
+  if(/permission-denied|insufficient/i.test(m))
+    return "Firestore rules rejected the request. Publish the rules from firestore.rules in the repo.";
+  if(/popup/i.test(m)) return "The sign-in popup was closed or blocked.";
+  return m;
+}
+
+function wsPath(){ return "workspaces/" + (cloudCfg().workspace || "shop"); }
+function cloudListen(){
+  const { collection, onSnapshot, query, orderBy, limit } = cloud.fb.fs;
+  cloud.unsub.forEach(u=>{ try{u();}catch(e){} });
+  cloud.unsub = [];
+  const watch = (name, key, q) => cloud.unsub.push(onSnapshot(q,
+    snap => { cloud[key] = snap.docs.map(d=>Object.assign({id:d.id}, d.data())); renderCloud(); },
+    err  => { cloud.err = friendlyCloudError(err); renderCloud(); }));
+  watch("designs","designs", query(collection(cloud.db, wsPath()+"/designs"), orderBy("updatedAt","desc"), limit(200)));
+  watch("people","people",   query(collection(cloud.db, wsPath()+"/people"), orderBy("last"), limit(500)));
+  watch("presets","presets", query(collection(cloud.db, wsPath()+"/presets"), orderBy("name"), limit(200)));
+}
+function cloudDisconnect(){
+  cloud.unsub.forEach(u=>{ try{u();}catch(e){} });
+  cloud.unsub = []; cloud.state = "off"; cloud.designs = cloud.people = cloud.presets = [];
+  cloud.curId = null; renderCloud();
+}
+
+/* ---------------------------------------------------------------- designs --- */
+function designPayload(){ return JSON.stringify(doc); }
+function payloadSize(){ return new Blob([designPayload()]).size; }
+
+async function cloudSaveDesign(asNew){
+  if(cloud.state!=="ready" || cloud.busy) return;
+  const body = designPayload(), size = new Blob([body]).size;
+  if(size > FS_DOC_LIMIT - 4096){
+    toast("Too big for one record (" + Math.round(size/1024) + " KB). Lower the graphic resolution.");
+    return;
+  }
+  const name = (doc.name || "Untitled").slice(0,60);
+  const { doc:dref, collection, setDoc, addDoc, serverTimestamp } = cloud.fb.fs;
+  cloud.busy = true; renderCloud();
+  try{
+    const meta = { name, updatedBy: cloud.who || "unknown", updatedAt: serverTimestamp(),
+                   faces: doc.faces.length, locks: doc.roster.length,
+                   labelW: r3(doc.label.w*MM), labelH: r3(doc.label.h*MM), bytes: size };
+    let id = asNew ? null : cloud.curId;
+    if(id){
+      await setDoc(dref(cloud.db, wsPath()+"/designs/"+id), meta, {merge:true});
+    } else {
+      const ref = await addDoc(collection(cloud.db, wsPath()+"/designs"), meta);
+      id = ref.id;
+    }
+    await setDoc(dref(cloud.db, wsPath()+"/designs/"+id+"/body/main"), { data: body });
+    cloud.curId = id; cloud.curName = name;
+    toast(asNew ? "Saved as a new design" : "Saved to the shop library");
+  }catch(e){ cloud.err = friendlyCloudError(e); toast("Save failed"); }
+  cloud.busy = false; renderCloud();
+}
+async function cloudOpenDesign(id){
+  if(cloud.state!=="ready") return;
+  const { doc:dref, getDoc } = cloud.fb.fs;
+  cloud.busy = true; renderCloud();
+  try{
+    const snap = await getDoc(dref(cloud.db, wsPath()+"/designs/"+id+"/body/main"));
+    if(!snap.exists()) throw new Error("That design has no saved body.");
+    const d = JSON.parse(snap.data().data);
+    if(!d || !Array.isArray(d.faces) || !d.faces.length) throw new Error("bad payload");
+    doc = d; ui.faceIdx = 0; ui.sel = []; ui.previewIdx = 0;
+    cloud.curId = id;
+    reflowAll(); buildAll(); fitView();
+    toast("Opened " + (doc.name||"design"));
+  }catch(e){ cloud.err = friendlyCloudError(e); toast("Couldn't open that one"); }
+  cloud.busy = false; renderCloud();
+}
+async function cloudDeleteDesign(id, name){
+  if(cloud.state!=="ready") return;
+  if(!confirm("Delete \u201C"+name+"\u201D from the shop library? This affects everyone.")) return;
+  const { doc:dref, deleteDoc } = cloud.fb.fs;
+  try{
+    await deleteDoc(dref(cloud.db, wsPath()+"/designs/"+id+"/body/main"));
+    await deleteDoc(dref(cloud.db, wsPath()+"/designs/"+id));
+    if(cloud.curId===id) cloud.curId = null;
+    toast("Deleted");
+  }catch(e){ cloud.err = friendlyCloudError(e); }
+  renderCloud();
+}
+
+/* ----------------------------------------------------------------- people --- */
+async function cloudPushRoster(){
+  if(cloud.state!=="ready") return;
+  const { collection, addDoc, serverTimestamp } = cloud.fb.fs;
+  const rows = doc.roster.filter(r=>(r.first||r.last).trim());
+  if(!rows.length){ toast("Nothing in this roster to share"); return; }
+  const have = new Set(cloud.people.map(p=>(p.first+"|"+p.last).toLowerCase()));
+  let n = 0;
+  try{
+    for(const r of rows){
+      const k = ((r.first||"")+"|"+(r.last||"")).toLowerCase();
+      if(have.has(k)) continue;
+      await addDoc(collection(cloud.db, wsPath()+"/people"),
+        { first:r.first||"", last:r.last||"", dept:r.dept||"", addedAt:serverTimestamp() });
+      have.add(k); n++;
+    }
+    toast(n ? n+" added to the shared roster" : "All of them were already shared");
+  }catch(e){ cloud.err = friendlyCloudError(e); renderCloud(); }
+}
+function cloudPullRoster(){
+  if(!cloud.people.length){ toast("The shared roster is empty"); return; }
+  doc.roster = cloud.people.map(p=>({first:p.first||"", last:p.last||"", dept:p.dept||""}));
+  ui.previewIdx = 0;
+  buildAll();
+  toast(doc.roster.length + " locks loaded from the shared roster");
+}
+async function cloudAddPerson(){
+  const first = (prompt("First name")||"").trim(); if(!first) return;
+  const last  = (prompt("Last name")||"").trim();
+  const dept  = (prompt("Department")||"").trim();
+  const { collection, addDoc, serverTimestamp } = cloud.fb.fs;
+  try{ await addDoc(collection(cloud.db, wsPath()+"/people"), {first,last,dept,addedAt:serverTimestamp()}); }
+  catch(e){ cloud.err = friendlyCloudError(e); renderCloud(); }
+}
+async function cloudDeletePerson(id){
+  const { doc:dref, deleteDoc } = cloud.fb.fs;
+  try{ await deleteDoc(dref(cloud.db, wsPath()+"/people/"+id)); }
+  catch(e){ cloud.err = friendlyCloudError(e); renderCloud(); }
+}
+
+/* ---------------------------------------------------------------- presets --- */
+async function cloudSavePreset(){
+  if(cloud.state!=="ready") return;
+  const p = laserEffective();
+  const def = MATERIALS[doc.laser.material].name.split(" — ")[0];
+  const name = (prompt("Name this recipe", def) || "").trim();
+  if(!name) return;
+  const { collection, addDoc, serverTimestamp } = cloud.fb.fs;
+  try{
+    await addDoc(collection(cloud.db, wsPath()+"/presets"), {
+      name, material:doc.laser.material, speed:p.speed, power:p.power, freq:p.freq,
+      interval:p.interval, passes:p.passes, fill:doc.laser.fill,
+      by: cloud.who || "unknown", savedAt: serverTimestamp()
+    });
+    toast("Recipe saved for the shop");
+  }catch(e){ cloud.err = friendlyCloudError(e); renderCloud(); }
+}
+function cloudApplyPreset(id){
+  const p = cloud.presets.find(x=>x.id===id); if(!p) return;
+  Object.assign(doc.laser, { material:p.material||doc.laser.material, manual:true,
+    speed:p.speed, power:p.power, freq:p.freq, interval:p.interval,
+    passes:p.passes, fill:p.fill||"scan" });
+  ui.panel = "laser"; renderRail(); saveLocal();
+  toast("Applied " + p.name);
+}
+async function cloudDeletePreset(id){
+  const { doc:dref, deleteDoc } = cloud.fb.fs;
+  try{ await deleteDoc(dref(cloud.db, wsPath()+"/presets/"+id)); }
+  catch(e){ cloud.err = friendlyCloudError(e); renderCloud(); }
+}
+
+/* -------------------------------------------------------------------- UI --- */
+function cloudDotClass(){
+  return cloud.state==="ready" ? "on" : cloud.state==="error" ? "bad"
+       : cloud.state==="connecting" ? "wait" : "";
+}
+function renderCloudChip(){
+  const el = $("cloudChip"); if(!el) return;
+  const label = { off:"Local", connecting:"…", ready:"Cloud", error:"Cloud" }[cloud.state];
+  el.className = "chip " + cloudDotClass();
+  el.innerHTML = `<i></i>${label}`;
+  el.title = cloud.state==="ready" ? ("Connected as " + cloud.who) : (cloud.err || "Not connected");
+}
+function renderCloud(){
+  renderCloudChip();
+  if(ui.panel==="cloud") renderRail();
+}
+function fmtWhen(ts){
+  if(!ts) return "";
+  const d = ts.toDate ? ts.toDate() : new Date(ts);
+  const diff = (Date.now()-d.getTime())/1000;
+  if(diff < 60) return "just now";
+  if(diff < 3600) return Math.floor(diff/60)+" min ago";
+  if(diff < 86400) return Math.floor(diff/3600)+" h ago";
+  return d.toLocaleDateString();
+}
+
+function panelCloud(){
+  const c = cloudCfg();
+  if(!cloudConfigured(c) || cloud.state==="off"){
+    return `
+    <section class="sec"><h3>Connect a Firebase project</h3><div class="body">
+      ${cloud.err?`<div class="callout bad">${esc(cloud.err)}</div>`:""}
+      <p class="hint" style="margin-top:0">Paste the web config from Firebase console → Project settings →
+        Your apps. The API key is an identifier, not a secret; your Firestore rules do the protecting.</p>
+      <div class="row">${cfgField("Project ID","projectId",c)}</div>
+      <div class="row">${cfgField("API key","apiKey",c)}</div>
+      <div class="row">${cfgField("App ID","appId",c)}</div>
+      <div class="row c2">${cfgField("Auth domain","authDomain",c)}${cfgField("Workspace","workspace",c)}</div>
+      <div class="row">${cfgField("Sender ID","messagingSenderId",c)}</div>
+      <div class="row"><label class="fld"><span>Sign-in</span>
+        <select id="cfgAuthMode">
+          <option value="anonymous"${c.authMode!=="google"?" selected":""}>Anonymous — anyone on the page</option>
+          <option value="google"${c.authMode==="google"?" selected":""}>Google account</option>
+        </select></label></div>
+      <div class="btnrow split" style="margin-top:8px">
+        <button class="btn pri" data-act="cloudsave">Connect</button>
+        <button class="btn sm ghost" data-act="cloudpaste">Paste whole config</button>
+      </div>
+      <p class="hint">Everything keeps working offline without this. The cloud only adds a shared library.</p>
+    </div></section>`;
+  }
+  if(cloud.state==="connecting")
+    return `<section class="sec"><div class="body"><div class="empty">Connecting to ${esc(c.projectId)}…</div></div></section>`;
+
+  const size = payloadSize();
+  const heavy = size > FS_DOC_LIMIT*0.7;
+
+  return `
+  <section class="sec"><h3>Workspace
+    <span class="tag">${esc(c.workspace||"shop")}</span></h3><div class="body">
+    ${cloud.err?`<div class="callout bad">${esc(cloud.err)}</div>`:""}
+    <div class="readout">
+      <b>Project</b><span>${esc(c.projectId)}</span>
+      <b>Signed in</b><span>${esc(cloud.who||"—")}</span>
+      <b>This design</b><span>${Math.round(size/1024)} KB</span>
+    </div>
+    ${heavy?`<div class="callout">This design is heavy for one record. Drop graphic resolution to 300 dpi
+      or use 1-bit mode before saving.</div>`:""}
+    <div class="btnrow split" style="margin-top:9px">
+      <button class="btn pri" data-act="cloudput" ${cloud.busy?"disabled":""}>${cloud.curId?"Save":"Save to library"}</button>
+      <button class="btn" data-act="cloudputnew" ${cloud.busy?"disabled":""}>Save as new</button>
+    </div>
+    <div class="btnrow" style="margin-top:6px">
+      <button class="btn sm ghost wide" data-act="cloudoff">Disconnect</button>
+    </div>
+  </div></section>
+
+  <section class="sec"><h3>Shop library <span class="tag">${cloud.designs.length}</span></h3><div class="body">
+    ${cloud.designs.length ? `<div class="layers">${cloud.designs.map(d=>`
+      <div class="layer" aria-selected="${d.id===cloud.curId}">
+        <span class="nm">${esc(d.name||"Untitled")}
+          <em style="display:block;font-style:normal;font-size:11px;color:var(--text-3)">
+            ${d.labelW?`${d.labelW}×${d.labelH} mm · `:""}${d.faces||"?"} faces ·
+            ${esc(d.updatedBy||"")} ${fmtWhen(d.updatedAt)}</em></span>
+        <button class="mini" data-open="${d.id}" title="Open">↧</button>
+        <button class="mini" data-deldesign="${d.id}" data-name="${esc(d.name||"")}" title="Delete">✕</button>
+      </div>`).join("")}</div>`
+      : `<div class="empty">Nothing saved yet. Save this design to start the library.</div>`}
+  </div></section>
+
+  <section class="sec"><h3>Shared roster <span class="tag">${cloud.people.length}</span></h3><div class="body">
+    <div class="btnrow split">
+      <button class="btn sm" data-act="pullroster">Load into batch</button>
+      <button class="btn sm" data-act="pushroster">Share this batch</button>
+    </div>
+    ${cloud.people.length ? `<div class="layers" style="margin-top:8px;max-height:230px;overflow:auto">
+      ${cloud.people.map(p=>`<div class="layer">
+        <span class="nm">${esc(((p.first||"")+" "+(p.last||"")).trim()||"—")}
+          <em style="display:block;font-style:normal;font-size:11px;color:var(--text-3)">${esc(p.dept||"")}</em></span>
+        <button class="mini" data-delperson="${p.id}">✕</button></div>`).join("")}</div>`
+      : `<div class="empty" style="margin-top:8px">No shared people yet</div>`}
+    <div class="btnrow" style="margin-top:6px"><button class="btn sm ghost wide" data-act="addperson">Add a person</button></div>
+  </div></section>
+
+  <section class="sec"><h3>Proven recipes <span class="tag">${cloud.presets.length}</span></h3><div class="body">
+    ${cloud.presets.length ? `<div class="layers">${cloud.presets.map(p=>`
+      <div class="layer">
+        <span class="nm">${esc(p.name)}
+          <em style="display:block;font-style:normal;font-size:11px;color:var(--text-3)">
+            ${p.speed} mm/s · ${p.power}% · ${p.freq} kHz · ${p.passes}p · ${esc(p.by||"")}</em></span>
+        <button class="mini" data-preset="${p.id}" title="Apply">↧</button>
+        <button class="mini" data-delpreset="${p.id}" title="Delete">✕</button>
+      </div>`).join("")}</div>` : `<div class="empty">No saved recipes yet</div>`}
+    <div class="btnrow" style="margin-top:8px">
+      <button class="btn sm wide" data-act="savepreset">Save the current laser settings</button>
+    </div>
+    <p class="hint">Once someone dials in a material on this machine, save it here so nobody repeats
+      the test grid.</p>
+  </div></section>`;
+}
+function cfgField(label, key, c){
+  return `<label class="fld"><span>${label}</span>
+    <input type="text" id="cfg_${key}" value="${esc(c[key]||"")}" spellcheck="false" autocapitalize="off"></label>`;
+}
+
+function cloudBind(root){
+  const g = id => root.querySelector("#"+id);
+  root.querySelectorAll("[data-open]").forEach(b=>b.addEventListener("click",()=>cloudOpenDesign(b.dataset.open)));
+  root.querySelectorAll("[data-deldesign]").forEach(b=>b.addEventListener("click",()=>cloudDeleteDesign(b.dataset.deldesign, b.dataset.name)));
+  root.querySelectorAll("[data-delperson]").forEach(b=>b.addEventListener("click",()=>cloudDeletePerson(b.dataset.delperson)));
+  root.querySelectorAll("[data-preset]").forEach(b=>b.addEventListener("click",()=>cloudApplyPreset(b.dataset.preset)));
+  root.querySelectorAll("[data-delpreset]").forEach(b=>b.addEventListener("click",()=>cloudDeletePreset(b.dataset.delpreset)));
+}
+
+async function cloudAction(a){
+  switch(a){
+    case "cloudsave": {
+      const keys = ["projectId","apiKey","appId","authDomain","workspace","messagingSenderId"];
+      const c = cloudCfg();
+      keys.forEach(k=>{ const el = $("cfg_"+k); if(el) c[k] = el.value.trim(); });
+      const am = $("cfgAuthMode"); if(am) c.authMode = am.value;
+      if(!c.authDomain && c.projectId) c.authDomain = c.projectId + ".firebaseapp.com";
+      if(!c.storageBucket && c.projectId) c.storageBucket = c.projectId + ".appspot.com";
+      if(!c.workspace) c.workspace = "shop";
+      if(!cloudConfigured(c)){ toast("Project ID, API key and App ID are all required"); return; }
+      saveCloudCfg(c); await cloudConnect(); break;
+    }
+    case "cloudpaste": {
+      const raw = prompt("Paste the whole firebaseConfig object or JSON");
+      if(!raw) return;
+      try{
+        const json = raw.replace(/^[^{]*/,"").replace(/[^}]*$/,"")
+                        .replace(/([{,]\s*)([A-Za-z0-9_]+)\s*:/g,'$1"$2":')
+                        .replace(/'/g,'"').replace(/,(\s*})/g,"$1");
+        const o = JSON.parse(json);
+        const c = Object.assign(cloudCfg(), o);
+        saveCloudCfg(c); ui.panel="cloud"; renderRail();
+        toast("Config read — press Connect");
+      }catch(e){ toast("Couldn't read that config"); }
+      break;
+    }
+    case "cloudoff": cloudDisconnect(); break;
+    case "cloudput": await cloudSaveDesign(false); break;
+    case "cloudputnew": await cloudSaveDesign(true); break;
+    case "pullroster": cloudPullRoster(); break;
+    case "pushroster": await cloudPushRoster(); break;
+    case "addperson": await cloudAddPerson(); break;
+    case "savepreset": await cloudSavePreset(); break;
+  }
+}
+
+function cloudBoot(){
+  renderCloudChip();
+  const chip = $("cloudChip");
+  if(chip) chip.addEventListener("click", ()=>showPanel("cloud"));
+  if(cloudConfigured()) cloudConnect();
+}
+
+</script>
+</body>
+</html>
