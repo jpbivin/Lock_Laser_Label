@@ -258,6 +258,14 @@ input[type=color]{width:100%;height:30px;padding:2px;background:var(--chrome-2);
   font-family:var(--cond);font-size:11px;letter-spacing:.09em;text-transform:uppercase;
 }
 .tbtn[aria-pressed="true"]{color:var(--accent);border-color:var(--accent-dim)}
+.modesw{display:flex;border:1px solid var(--line);border-radius:var(--r);overflow:hidden;
+  background:rgba(20,25,35,.86);backdrop-filter:blur(6px)}
+.modesw .tbtn{border:0;border-right:1px solid var(--line);border-radius:0;background:transparent}
+.modesw .tbtn:last-child{border-right:0}
+.modesw .tbtn[aria-pressed="true"]{background:var(--accent);color:#170700;font-weight:700}
+/* the label-only tools have no meaning on the bed */
+#stagewrap[data-mode="fixture"] #tRule{display:none}
+#stagewrap[data-mode="label"] #tNums{display:none}
 .tbtn:hover{color:var(--text)}
 #stage{flex:1;min-height:0;touch-action:none;user-select:none;display:block;width:100%}
 
@@ -283,6 +291,7 @@ input[type=color]{width:100%;height:30px;padding:2px;background:var(--chrome-2);
 }
 @media(max-width:1079px){
   #nav{display:grid;grid-template-columns:repeat(5,1fr)}
+  #nav button{font-size:9px;letter-spacing:.05em}
   #app{padding-bottom:calc(var(--navbar) + env(safe-area-inset-bottom))}
   .brand .mk{font-size:15px;letter-spacing:.12em}
   .tbtn{padding:5px 7px;font-size:10px}
@@ -456,10 +465,15 @@ input[type=color]{width:100%;height:30px;padding:2px;background:var(--chrome-2);
 
   <div id="stagewrap">
     <div id="stagetools">
+      <div class="modesw">
+        <button class="tbtn" data-mode="label" aria-pressed="true">Label</button>
+        <button class="tbtn" data-mode="fixture" aria-pressed="false">Fixture</button>
+      </div>
       <button class="tbtn" id="tGrid">Grid</button>
       <button class="tbtn" id="tSnap">Snap</button>
       <button class="tbtn" id="tLock">Body</button>
       <button class="tbtn" id="tRule">Rule</button>
+      <button class="tbtn" id="tNums">Nums</button>
       <div class="grow"></div>
       <button class="tbtn" id="tFit">Fit</button>
     </div>
@@ -490,8 +504,8 @@ input[type=color]{width:100%;height:30px;padding:2px;background:var(--chrome-2);
       <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/></svg>Canvas</button>
     <button data-nav="batch" aria-pressed="false">
       <svg viewBox="0 0 24 24"><rect x="3" y="4" width="12" height="14" rx="1.5"/><path d="M8 8h4M8 12h4"/><path d="M18 8v12H8"/></svg>Batch</button>
-    <button data-nav="laser" aria-pressed="false">
-      <svg viewBox="0 0 24 24"><path d="M12 2v6M12 16v6M4.9 4.9l4.2 4.2M14.9 14.9l4.2 4.2M2 12h6M16 12h6M4.9 19.1l4.2-4.2M14.9 9.1l4.2-4.2"/><circle cx="12" cy="12" r="2.4"/></svg>Laser</button>
+    <button data-nav="fixture" aria-pressed="false">
+      <svg viewBox="0 0 24 24"><rect x="3" y="3" width="6.5" height="8" rx="1"/><rect x="14.5" y="3" width="6.5" height="8" rx="1"/><rect x="3" y="13" width="6.5" height="8" rx="1"/><rect x="14.5" y="13" width="6.5" height="8" rx="1"/></svg>Fixture</button>
   </nav>
 </div>
 
@@ -569,7 +583,11 @@ function defaultDoc(){
     pad:0.08,
     faces:[], roster:[{first:"Dana",last:"Whitfield",dept:"Maintenance"},
                       {first:"",last:"",dept:""}],
-    sheet:{ cols:4, gapX:0.20, gapY:0.20, field:110/MM, order:"pairs" },
+    sheet:{ order:"pairs" },
+    fixture:{ rows:2, cols:3, pitchX:1.75, pitchY:2.40,
+              originX:0.90, originY:0.85, stagger:0,
+              order:"row", field:110/MM, batch:0,
+              moved:{}, skipped:{} },
     laser:{ material:"anodized", trim:0, manual:false,
             speed:0, power:0, freq:0, interval:0, passes:1, fill:"scan" }
   };
@@ -611,6 +629,31 @@ function seedDangerFace(d){
     textEl({name:"Standard", text:"OSHA 1910.147", cap:0.050, w:W, h:0.07,
             anchor:"bc", ox:0, oy:-0.01, track:70})
   ]};
+}
+
+function migrateDoc(d){
+  if(!d || typeof d!=="object") return d;
+  d.sheet = d.sheet || {};
+  if(!d.sheet.order) d.sheet.order = "pairs";
+  if(!d.fixture){
+    // old projects stored a column count and edge gaps; convert to true pitch
+    const cols = Math.max(1, Math.round(d.sheet.cols || 3));
+    const gx = d.sheet.gapX !== undefined ? d.sheet.gapX : 0.2;
+    const gy = d.sheet.gapY !== undefined ? d.sheet.gapY : 0.2;
+    const lw = (d.label && d.label.w) || 1.25, lh = (d.label && d.label.h) || 1.7;
+    const field = d.sheet.field !== undefined ? d.sheet.field : 110/MM;
+    const pitchX = lw + gx, pitchY = lh + gy;
+    const rows = Math.max(1, Math.floor(((field>0?field:pitchY*3) + 1e-6) / pitchY)) || 1;
+    d.fixture = { rows, cols, pitchX, pitchY,
+                  originX: pitchX/2 + 0.1, originY: pitchY/2 + 0.1,
+                  stagger:0, order:"row", field, batch:0, moved:{}, skipped:{} };
+  }
+  const f = d.fixture;
+  f.moved = f.moved || {}; f.skipped = f.skipped || {};
+  if(f.batch === undefined) f.batch = 0;
+  if(f.stagger === undefined) f.stagger = 0;
+  if(f.field === undefined) f.field = 110/MM;
+  return d;
 }
 
 let doc = defaultDoc();
@@ -892,31 +935,115 @@ function primSvg(p, ox, oy, k, opt){
   return "";
 }
 
+/* -------------------------------------------------------------- fixture --- */
+const cellKey = (r,c) => r+"_"+c;
+
+function cellCenter(r,c){
+  const f = doc.fixture;
+  const mv = f.moved[cellKey(r,c)] || {dx:0, dy:0};
+  return { x: f.originX + c*f.pitchX + (r%2 ? f.stagger : 0) + mv.dx,
+           y: f.originY + r*f.pitchY + mv.dy };
+}
+/* every cell in the array, in the order the machine will fill them */
+function fixtureCells(){
+  const f = doc.fixture, out = [];
+  const rows = Math.max(1, Math.round(f.rows)), cols = Math.max(1, Math.round(f.cols));
+  const n = rows*cols;
+  for(let i=0;i<n;i++){
+    let r, c;
+    if(f.order==="col"){ c = Math.floor(i/rows); r = i%rows; }
+    else if(f.order==="serp"){ r = Math.floor(i/cols); const k = i%cols; c = (r%2) ? cols-1-k : k; }
+    else { r = Math.floor(i/cols); c = i%cols; }
+    const p = cellCenter(r,c);
+    out.push({ r, c, x:p.x, y:p.y, skip: !!f.skipped[cellKey(r,c)] });
+  }
+  return out;
+}
+function fixtureCapacity(){ return fixtureCells().filter(c=>!c.skip).length; }
+
+/* the working area: the lens field, or a box around whatever the array needs */
+function fieldRect(){
+  const f = doc.fixture;
+  if(f.field > 0) return { x:0, y:0, w:f.field, h:f.field };
+  const cells = fixtureCells();
+  const hw = doc.label.w/2, hh = doc.label.h/2, m = 0.12;
+  const xs = cells.map(c=>c.x), ys = cells.map(c=>c.y);
+  const x0 = Math.min(...xs)-hw-m, y0 = Math.min(...ys)-hh-m;
+  return { x:x0, y:y0,
+           w: Math.max(...xs)+hw+m-x0, h: Math.max(...ys)+hh+m-y0 };
+}
+function centerArray(){
+  const f = doc.fixture, fr = fieldRect();
+  const span = (rc,pitch) => (Math.max(1,Math.round(rc))-1)*pitch;
+  f.originX = fr.x + (fr.w - span(f.cols,f.pitchX) - Math.abs(f.stagger))/2
+              + (f.stagger<0 ? Math.abs(f.stagger) : 0);
+  f.originY = fr.y + (fr.h - span(f.rows,f.pitchY))/2;
+}
+/* how many rows/columns of this pitch actually fit the field */
+function fitArrayToField(){
+  const f = doc.fixture;
+  if(f.field <= 0) return;
+  const usableX = f.field - doc.label.w, usableY = f.field - doc.label.h;
+  f.cols = Math.max(1, Math.floor(usableX/f.pitchX) + 1);
+  f.rows = Math.max(1, Math.floor(usableY/f.pitchY) + 1);
+  centerArray();
+}
+function fixtureOversize(){
+  const fr = fieldRect(), out = [];
+  if(doc.fixture.field <= 0) return out;
+  fixtureCells().forEach(c=>{
+    if(c.skip) return;
+    if(c.x-doc.label.w/2 < -1e-6 || c.y-doc.label.h/2 < -1e-6 ||
+       c.x+doc.label.w/2 > fr.w+1e-6 || c.y+doc.label.h/2 > fr.h+1e-6)
+      out.push(c.r+1+"×"+(c.c+1));
+  });
+  return out;
+}
+function batchCount(){
+  const cap = fixtureCapacity();
+  return cap ? Math.max(1, Math.ceil(allFaceCount()/cap)) : 1;
+}
+function allFaceCount(){
+  const o = doc.sheet.order;
+  const per = (o==="pairs"||o==="grouped") ? doc.faces.length : 1;
+  return doc.roster.length * per;
+}
+
 /* ---------------------------------------------------------------- sheet --- */
-function sheetFaces(){
-  const out = [];
+function sheetFaces(batchIdx){
+  const all = [];
   const order = doc.sheet.order;
   const push = (fi, ri) => {
     const f = doc.faces[fi]; if(!f) return;
     const r = doc.roster[ri]||{};
     const nm = (r.first||r.last) ? (r.first+" "+r.last).trim() : ("Lock "+(ri+1));
-    out.push({ name:nm+" · "+f.name, prims:facePrims(f, rosterCtx(ri)) });
+    all.push({ name:nm+" · "+f.name, short:nm, faceName:f.name,
+               prims:facePrims(f, rosterCtx(ri)) });
   };
   if(order==="pairs"){
     doc.roster.forEach((_,ri)=> doc.faces.forEach((_,fi)=> push(fi,ri)));
   } else if(order==="grouped"){
     doc.faces.forEach((_,fi)=> doc.roster.forEach((_,ri)=> push(fi,ri)));
   } else {
-    const fi = parseInt(order.replace("face",""))||0;
+    const fi = parseInt(String(order).replace("face",""))||0;
     doc.roster.forEach((_,ri)=> push(fi,ri));
   }
-  const cols = Math.max(1, Math.round(doc.sheet.cols));
-  const rows = Math.max(1, Math.ceil(out.length/cols));
-  const cw = doc.label.w + doc.sheet.gapX, ch = doc.label.h + doc.sheet.gapY;
-  out.forEach((f,i)=>{ f.ox = (i%cols)*cw; f.oy = Math.floor(i/cols)*ch; });
-  return { faces:out, cols, rows,
-           w: cols*doc.label.w + (cols-1)*doc.sheet.gapX,
-           h: rows*doc.label.h + (rows-1)*doc.sheet.gapY };
+
+  const cells = fixtureCells().filter(c=>!c.skip);
+  const cap = cells.length || 1;
+  const batches = Math.max(1, Math.ceil(all.length/cap));
+  const b = clamp(batchIdx===undefined ? (doc.fixture.batch||0) : batchIdx, 0, batches-1);
+  const slice = all.slice(b*cap, b*cap + cap);
+
+  const fr = fieldRect();
+  slice.forEach((f,i)=>{
+    const cell = cells[i];
+    f.cell = cell;
+    f.ox = cell.x - doc.label.w/2 - fr.x;
+    f.oy = cell.y - doc.label.h/2 - fr.y;
+  });
+  return { faces:slice, total:all.length, capacity:cap, batches, batch:b,
+           w:fr.w, h:fr.h, field:fr };
 }
 
 function exportSVG(){
@@ -926,7 +1053,8 @@ function exportSVG(){
     + `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" `
     + `width="${r3(sh.w*k)}mm" height="${r3(sh.h*k)}mm" `
     + `viewBox="0 0 ${r3(sh.w*k)} ${r3(sh.h*k)}">\n`
-    + `<title>${esc(doc.name)} — ${sh.faces.length} faces</title>\n`;
+    + `<title>${esc(doc.name)} — ${sh.faces.length} faces`
+    + (sh.batches>1 ? ` — batch ${sh.batch+1} of ${sh.batches}` : "") + `</title>\n`;
   sh.faces.forEach((f,i)=>{
     s += `<g id="${esc("face_"+(i+1)+"_"+f.name.replace(/[^A-Za-z0-9]+/g,"_"))}">\n`;
     f.prims.forEach(p=>{ const t = primSvg(p, f.ox, f.oy, k, opt); if(t) s += "  "+t+"\n"; });
@@ -1039,6 +1167,7 @@ const ui = {
   faceIdx:0, previewIdx:0, sel:[],
   view:{x:-0.4, y:-0.4, w:3}, scale:1,
   showGrid:true, snap:true, showLock:true, showRule:true,
+  stageMode:"label", showNums:true, fixSel:null,
   grid:1/16,
   panel:"stage",
   drag:null, guides:[]
@@ -1063,7 +1192,9 @@ function worldBounds(){
 function fitView(){
   const r = stage.getBoundingClientRect();
   if(!r.width || !r.height) return;
-  const b = worldBounds();
+  const b = ui.stageMode==="fixture"
+    ? (()=>{ const f = fieldRect(); return {x:0, y:0, w:f.w, h:f.h}; })()
+    : worldBounds();
   const padTop = ui.showRule ? 0.34 : 0.18, padL = ui.showRule ? 0.30 : 0.18;
   const bw = b.w + padL + 0.18, bh = b.h + padTop + 0.18;
   const z = Math.min(r.width/bw, r.height/bh) * 0.94;
@@ -1084,6 +1215,7 @@ function toWorld(ev){
 
 /* ------------------------------------------------------------------ draw --- */
 function drawStage(){
+  if(ui.stageMode==="fixture") return drawFixture();
   const r = stage.getBoundingClientRect();
   if(!r.width) return;
   const v = viewRect();
@@ -1162,8 +1294,158 @@ function drawStage(){
     `<defs><clipPath id="lblclip"><rect x="0" y="0" width="${r3(L.w)}" height="${r3(L.h)}" rx="${r3(L.corner)}"/></clipPath></defs>` + s;
 }
 
-function drawRule(v, S){
-  const L = doc.label, px = n=>n/S;
+/* ============================================================================
+   FIXTURE VIEW — the bed as the machine sees it. Cells are centre points.
+   ========================================================================== */
+function drawFixture(){
+  const r = stage.getBoundingClientRect();
+  if(!r.width) return;
+  const v = viewRect();
+  ui.scale = r.width / v.w;
+  const S = ui.scale, px = n => n/S;
+  stage.setAttribute("viewBox", `${r3(v.x)} ${r3(v.y)} ${r3(v.w)} ${r3(v.h)}`);
+  stage.setAttribute("preserveAspectRatio","none");
+
+  const fr = fieldRect(), L = doc.label, F = doc.fixture;
+  const lockOff = lockOrigin();
+  const sh = sheetFaces();
+  const assigned = new Map();
+  sh.faces.forEach(f=>{ if(f.cell) assigned.set(cellKey(f.cell.r,f.cell.c), f); });
+
+  let s = "";
+
+  /* bed / lens field */
+  s += `<rect x="0" y="0" width="${r3(fr.w)}" height="${r3(fr.h)}" fill="#161B24"`
+    + ` stroke="${F.field>0?"#F26419":"#39424F"}" stroke-width="1.5" vector-effect="non-scaling-stroke"/>`;
+  if(F.field>0){
+    s += `<line x1="${r3(fr.w/2)}" y1="0" x2="${r3(fr.w/2)}" y2="${r3(fr.h)}" stroke="#2E384A" stroke-width="1" vector-effect="non-scaling-stroke"/>`
+      +  `<line x1="0" y1="${r3(fr.h/2)}" x2="${r3(fr.w)}" y2="${r3(fr.h/2)}" stroke="#2E384A" stroke-width="1" vector-effect="non-scaling-stroke"/>`;
+  }
+  /* bed grid at the snap increment, when it is not too dense */
+  if(ui.showGrid && ui.grid*S >= 5){
+    let g = "";
+    for(let x=ui.grid; x<fr.w; x+=ui.grid)
+      g += `<line x1="${r3(x)}" y1="0" x2="${r3(x)}" y2="${r3(fr.h)}" stroke="#222A38" stroke-width="1" vector-effect="non-scaling-stroke"/>`;
+    for(let y=ui.grid; y<fr.h; y+=ui.grid)
+      g += `<line x1="0" y1="${r3(y)}" x2="${r3(fr.w)}" y2="${r3(y)}" stroke="#222A38" stroke-width="1" vector-effect="non-scaling-stroke"/>`;
+    s += g;
+  }
+
+  const opt = { forExport:false, ink:"#14181F", knock:"var(--paper)", guide:"#A8A49A" };
+
+  fixtureCells().forEach(cell=>{
+    const cx = cell.x - fr.x, cy = cell.y - fr.y;
+    const lx = cx - L.w/2, ly = cy - L.h/2;
+    const k = cellKey(cell.r, cell.c);
+    const sel = ui.fixSel === k;
+    const face = assigned.get(k);
+    const moved = !!F.moved[k];
+
+    /* lock body silhouette under the label */
+    if(ui.showLock){
+      s += `<rect x="${r3(lx + lockOff.x)}" y="${r3(ly + lockOff.y)}" width="${r3(doc.lock.w)}"`
+        + ` height="${r3(doc.lock.h)}" rx="${r3(doc.lock.corner)}" fill="#20262F"`
+        + ` stroke="#39424F" stroke-width="1" vector-effect="non-scaling-stroke" opacity="${cell.skip?.35:1}"/>`;
+    }
+    /* the label stock */
+    const empty = !face && !cell.skip;
+    s += `<rect x="${r3(lx)}" y="${r3(ly)}" width="${r3(L.w)}" height="${r3(L.h)}" rx="${r3(L.corner)}"`
+      + ` fill="${cell.skip?"#2A313D":"var(--paper)"}" fill-opacity="${empty?0.30:1}"`
+      + ` stroke="${sel?"var(--cyan)":moved?"var(--accent)":"#9A968B"}"`
+      + ` stroke-width="${sel?2:moved?1.6:1}"`
+      + (empty?` stroke-dasharray="5 4"`:"") + ` vector-effect="non-scaling-stroke"/>`;
+
+    /* real artwork, so you can see which lock lands where */
+    if(face && !cell.skip){
+      s += `<g clip-path="url(#fxclip)" transform="translate(${r3(lx)} ${r3(ly)})">`;
+      face.prims.forEach(p=>{ s += primSvg(p, 0, 0, 1, opt); });
+      s += `</g>`;
+    } else {
+      const fs = px(11);
+      s += `<text x="${r3(cx)}" y="${r3(cy - px(14))}" fill="#5C6980" font-family="var(--cond),sans-serif"`
+        + ` font-size="${r3(fs)}" text-anchor="middle" letter-spacing="${r3(fs*0.12)}">`
+        + (cell.skip ? "SKIP" : "EMPTY") + `</text>`;
+    }
+
+    /* centre crosshair — the thing you are actually positioning */
+    const t = px(9);
+    s += `<g opacity="${cell.skip?.5:1}">`
+      + `<line x1="${r3(cx-t)}" y1="${r3(cy)}" x2="${r3(cx+t)}" y2="${r3(cy)}" stroke="var(--cyan)" stroke-width="1.2" vector-effect="non-scaling-stroke"/>`
+      + `<line x1="${r3(cx)}" y1="${r3(cy-t)}" x2="${r3(cx)}" y2="${r3(cy+t)}" stroke="var(--cyan)" stroke-width="1.2" vector-effect="non-scaling-stroke"/>`
+      + `<circle cx="${r3(cx)}" cy="${r3(cy)}" r="${r3(px(3))}" fill="none" stroke="var(--cyan)" stroke-width="1.2" vector-effect="non-scaling-stroke"/></g>`;
+
+    /* index badge + who is on it */
+    if(ui.showNums){
+      const fs = px(10);
+      const idx = face ? (sh.faces.indexOf(face)+1) : null;
+      s += `<text x="${r3(lx)}" y="${r3(ly - px(4))}" fill="${sel?"#2BC5D9":"#8593A8"}"`
+        + ` font-family="ui-monospace,monospace" font-size="${r3(fs)}">${cell.r+1}·${cell.c+1}`
+        + (idx?`  #${idx}`:"") + `</text>`;
+      if(face){
+        s += `<text x="${r3(cx)}" y="${r3(ly + L.h + fs*1.5)}" fill="#8593A8" text-anchor="middle"`
+          + ` font-family="ui-monospace,monospace" font-size="${r3(fs)}">${esc(face.short)} · ${esc(face.faceName)}</text>`;
+      }
+    }
+  });
+
+  /* pitch dimensions between the first two cells */
+  if(F.cols>1 || F.rows>1){
+    const fs = px(10), cells = fixtureCells();
+    /* dimension the nominal pitch, not a cell someone has dragged off it */
+    const nomX = c => F.originX + c*F.pitchX - fr.x;
+    const nomY = r => F.originY + r*F.pitchY - fr.y;
+    const topY    = Math.min(...cells.map(c=>c.y)) - fr.y - L.h/2;
+    const botY    = Math.max(...cells.map(c=>c.y)) - fr.y + L.h/2;
+    const leftX   = Math.min(...cells.map(c=>c.x)) - fr.x - L.w/2;
+    const rightX  = Math.max(...cells.map(c=>c.x)) - fr.x + L.w/2;
+    if(F.cols>1){
+      let y = topY - px(18);
+      if(y < px(12)) y = Math.min(fr.h - px(8), botY + px(22));
+      s += dimLine(nomX(0), nomX(1), y, "x", U.fmt(F.pitchX,3)+" "+U.label(), fs, px);
+    }
+    if(F.rows>1){
+      let x = leftX - px(18);
+      if(x < px(12)) x = Math.min(fr.w - px(8), rightX + px(22));
+      s += dimLine(nomY(0), nomY(1), x, "y", U.fmt(F.pitchY,3)+" "+U.label(), fs, px);
+    }
+  }
+
+  if(ui.showRule) s += drawRule(v, S, fr);
+
+  stage.innerHTML =
+    `<defs><clipPath id="fxclip"><rect x="0" y="0" width="${r3(L.w)}" height="${r3(L.h)}" rx="${r3(L.corner)}"/></clipPath></defs>` + s;
+}
+
+function dimLine(a, b, at, axis, label, fs, px){
+  const t = px(4);
+  const A = axis==="x" ? [a,at] : [at,a], B = axis==="x" ? [b,at] : [at,b];
+  const cap = axis==="x"
+    ? p=>`<line x1="${r3(p[0])}" y1="${r3(p[1]-t)}" x2="${r3(p[0])}" y2="${r3(p[1]+t)}" stroke="var(--accent)" stroke-width="1" vector-effect="non-scaling-stroke"/>`
+    : p=>`<line x1="${r3(p[0]-t)}" y1="${r3(p[1])}" x2="${r3(p[0]+t)}" y2="${r3(p[1])}" stroke="var(--accent)" stroke-width="1" vector-effect="non-scaling-stroke"/>`;
+  const mid = axis==="x" ? [(a+b)/2, at-px(5)] : [at-px(5), (a+b)/2];
+  const txt = axis==="x"
+    ? `<text x="${r3(mid[0])}" y="${r3(mid[1])}" fill="var(--accent)" font-family="ui-monospace,monospace" font-size="${r3(fs)}" text-anchor="middle">${esc(label)}</text>`
+    : `<text x="${r3(mid[0])}" y="${r3(mid[1])}" fill="var(--accent)" font-family="ui-monospace,monospace" font-size="${r3(fs)}" text-anchor="middle" transform="rotate(-90 ${r3(mid[0])} ${r3(mid[1])})">${esc(label)}</text>`;
+  return `<g pointer-events="none">`
+    + `<line x1="${r3(A[0])}" y1="${r3(A[1])}" x2="${r3(B[0])}" y2="${r3(B[1])}" stroke="var(--accent)" stroke-width="1" vector-effect="non-scaling-stroke"/>`
+    + cap(A) + cap(B) + txt + `</g>`;
+}
+
+/* which cell is under this world point */
+function hitCell(w){
+  const fr = fieldRect(), L = doc.label;
+  const cells = fixtureCells();
+  for(let i=cells.length-1;i>=0;i--){
+    const c = cells[i];
+    const cx = c.x-fr.x, cy = c.y-fr.y;
+    if(Math.abs(w.x-cx) <= L.w/2 && Math.abs(w.y-cy) <= L.h/2) return c;
+  }
+  return null;
+}
+
+function drawRule(v, S, fr){
+  const L = fr ? {w:fr.w, h:fr.h} : doc.label;
+  const px = n=>n/S;
   const inMode = doc.units==="in";
   const div = inMode ? 1/16 : 1/MM;             // finest tick
   const majEvery = inMode ? 16 : 10;            // 1 in, or 10 mm
@@ -1288,6 +1570,21 @@ stage.addEventListener("pointerdown", ev=>{
     ui.drag = null; return;
   }
   const w = toWorld(ev);
+
+  if(ui.stageMode==="fixture"){
+    const cell = hitCell(w);
+    if(cell){
+      ui.fixSel = cellKey(cell.r, cell.c);
+      const fr = fieldRect();
+      ui.drag = { mode:"cell", cell, start:w, base:{x:cell.x, y:cell.y},
+                  moved:false, fr };
+      drawFixture(); renderProps();
+    } else {
+      ui.drag = { mode:"pan", start:{cx:ev.clientX, cy:ev.clientY}, vx:ui.view.x, vy:ui.view.y };
+    }
+    return;
+  }
+
   const h = hitHandle(w);
   if(h){
     const el = firstSel();
@@ -1331,6 +1628,20 @@ stage.addEventListener("pointermove", ev=>{
     drawStage(); return;
   }
   const w = toWorld(ev);
+  if(d.mode==="cell"){
+    let nx = d.base.x + (w.x-d.start.x), ny = d.base.y + (w.y-d.start.y);
+    if(Math.abs(nx-d.base.x) > 0.004 || Math.abs(ny-d.base.y) > 0.004) d.moved = true;
+    if(ui.snap){ nx = Math.round(nx/ui.grid)*ui.grid; ny = Math.round(ny/ui.grid)*ui.grid; }
+    const F = doc.fixture, k = cellKey(d.cell.r, d.cell.c);
+    const nominalX = F.originX + d.cell.c*F.pitchX + (d.cell.r%2 ? F.stagger : 0);
+    const nominalY = F.originY + d.cell.r*F.pitchY;
+    const dx = nx-nominalX, dy = ny-nominalY;
+    if(Math.abs(dx)<1e-6 && Math.abs(dy)<1e-6) delete F.moved[k];
+    else F.moved[k] = { dx:r3(dx), dy:r3(dy) };
+    showCellCoord(nx, ny);
+    drawFixture();
+    return;
+  }
   if(d.mode==="move"){
     let dx = w.x-d.start.x, dy = w.y-d.start.y;
     if(d.boxes.length===1){
@@ -1371,6 +1682,16 @@ stage.addEventListener("pointermove", ev=>{
 function endDrag(ev){
   pointers.delete(ev.pointerId);
   if(pointers.size<2) pinch = null;
+  if(ui.drag && ui.drag.mode==="cell"){
+    const d = ui.drag; ui.drag = null;
+    if(!d.moved){                       // a tap toggles the cell off and on
+      const F = doc.fixture, k = cellKey(d.cell.r, d.cell.c);
+      if(F.skipped[k]) delete F.skipped[k]; else F.skipped[k] = true;
+    }
+    drawFixture(); renderProps(); updateStatus();
+    if(typeof saveLocal==="function") saveLocal();
+    return;
+  }
   if(ui.drag){ const was = ui.drag.mode; ui.drag = null; ui.guides = [];
     drawStage(); renderProps(); updateStatus();
     if(was !== "pan" && typeof saveLocal === "function") saveLocal(); }
@@ -1392,6 +1713,7 @@ stage.addEventListener("wheel", ev=>{
 }, {passive:false});
 
 stage.addEventListener("dblclick", ev=>{
+  if(ui.stageMode==="fixture") return;
   const el = hitElement(toWorld(ev));
   if(el){ ui.sel=[el.id]; syncSelection(); showPanel("props"); }
 });
@@ -1400,9 +1722,28 @@ document.addEventListener("keydown", ev=>{
   const tag = (ev.target.tagName||"").toLowerCase();
   if(tag==="input"||tag==="textarea"||tag==="select") return;
   const sel = selEls();
-  if(ev.key==="Escape"){ ui.sel=[]; syncSelection(); drawStage(); return; }
+  if(ev.key==="Escape"){
+    if(ui.stageMode==="fixture"){ ui.fixSel=null; drawFixture(); renderProps(); return; }
+    ui.sel=[]; syncSelection(); drawStage(); return; }
+  if((ev.key==="Delete"||ev.key==="Backspace") && ui.stageMode==="fixture" && ui.fixSel){
+    ev.preventDefault();
+    doc.fixture.skipped[ui.fixSel] = true;
+    drawFixture(); renderProps(); if(typeof saveLocal==="function") saveLocal();
+    return; }
   if((ev.key==="Delete"||ev.key==="Backspace") && sel.length){ ev.preventDefault(); deleteSel(); return; }
   if(ev.key.toLowerCase()==="d" && (ev.ctrlKey||ev.metaKey)){ ev.preventDefault(); duplicateSel(); return; }
+  if(ev.key.startsWith("Arrow") && ui.stageMode==="fixture" && ui.fixSel){
+    ev.preventDefault();
+    const st = ev.shiftKey ? ui.grid*4 : ui.grid;
+    const [r,c] = ui.fixSel.split("_").map(Number);
+    const F = doc.fixture, k = ui.fixSel;
+    const m = F.moved[k] || {dx:0, dy:0};
+    m.dx = r3(m.dx + (ev.key==="ArrowLeft"?-st:ev.key==="ArrowRight"?st:0));
+    m.dy = r3(m.dy + (ev.key==="ArrowUp"?-st:ev.key==="ArrowDown"?st:0));
+    if(Math.abs(m.dx)<1e-6 && Math.abs(m.dy)<1e-6) delete F.moved[k]; else F.moved[k]=m;
+    drawFixture(); renderProps(); if(typeof saveLocal==="function") saveLocal();
+    return;
+  }
   if(ev.key.startsWith("Arrow") && sel.length){
     ev.preventDefault();
     const st = ev.shiftKey ? ui.grid*4 : ui.grid;
@@ -1413,7 +1754,15 @@ document.addEventListener("keydown", ev=>{
   }
 });
 
+function showCellCoord(x, y){
+  $("stCoord").textContent =
+    `centre ${U.fmt(x)}, ${U.fmt(y)} ${U.label()}   ·   ${r3(x*MM)}, ${r3(y*MM)} mm`;
+}
 function showCoord(w){
+  if(ui.stageMode==="fixture"){
+    $("stCoord").textContent = `${U.fmt(w.x)}, ${U.fmt(w.y)} ${U.label()} on the bed`;
+    return;
+  }
   const el = firstSel();
   const st = document.getElementById("stCoord");
   if(el){ const b=boxOf(el);
@@ -1599,7 +1948,7 @@ function fAnchor(path){
 }
 
 /* ------------------------------------------------------------ right rail --- */
-const RAIL_TABS = [["props","Element"],["design","Stock"],["batch","Batch"],["laser","Laser"],["cloud","Cloud"],["export","Export"]];
+const RAIL_TABS = [["props","Element"],["design","Stock"],["batch","Batch"],["fixture","Fixture"],["laser","Laser"],["cloud","Cloud"],["export","Export"]];
 
 function renderRail(){
   const tabs = `<div class="sec"><div class="body" style="padding-top:10px">
@@ -1610,6 +1959,7 @@ function renderRail(){
   if(ui.panel==="props")  body = panelProps();
   else if(ui.panel==="design") body = panelDesign();
   else if(ui.panel==="batch")  body = panelBatch();
+  else if(ui.panel==="fixture") body = panelFixture();
   else if(ui.panel==="laser")  body = panelLaser();
   else if(ui.panel==="cloud")  body = panelCloud();
   else body = panelExport();
@@ -1744,9 +2094,6 @@ function panelDesign(){
 /* ---- batch ---- */
 function panelBatch(){
   const sh = sheetFaces();
-  const over = doc.sheet.field>0 && (sh.w>doc.sheet.field || sh.h>doc.sheet.field);
-  const perC = Math.max(1, Math.floor((doc.sheet.field+doc.sheet.gapX)/(doc.label.w+doc.sheet.gapX)));
-  const perR = Math.max(1, Math.floor((doc.sheet.field+doc.sheet.gapY)/(doc.label.h+doc.sheet.gapY)));
   return `
   <section class="sec"><h3>Roster <span class="tag">${doc.roster.length}</span></h3><div class="body">
     <div class="roster" id="roster"></div>
@@ -1764,17 +2111,94 @@ function panelBatch(){
   <section class="sec"><h3>Sheet layout</h3><div class="body">
     <div class="row">${fSel("Face order","doc.sheet.order",[["pairs","Both faces, per lock"],
       ["grouped","All of face 1, then face 2"],...doc.faces.map((f,i)=>["face"+i, f.name+" only"])])}</div>
-    <div class="row c3">${fNum("Columns","doc.sheet.cols",1,1,40)}
-      ${fLen("Gap X","doc.sheet.gapX")}${fLen("Gap Y","doc.sheet.gapY")}</div>
-    <div class="row">${fSel("Lens field","doc.sheet.field",[[110/MM,"110 mm lens — 110 × 110"],
-      [150/MM,"150 mm lens — 150 × 150"],[0,"No limit"]],"num")}</div>
     <div class="readout">
-      <b>Faces</b><span>${sh.faces.length}</span>
-      <b>Sheet</b><span>${U.fmt(sh.w,2)} × ${U.fmt(sh.h,2)} ${U.label()}</span>
-      <b>Grid</b><span>${sh.cols} × ${sh.rows}</span>
+      <b>Faces needed</b><span>${sh.total}</span>
+      <b>Fixture holds</b><span>${sh.capacity}</span>
+      <b>Runs</b><span>${sh.batches}</span>
     </div>
-    ${over?`<div class="callout bad">Sheet is larger than the ${Math.round(doc.sheet.field*MM)} mm field.
-      Mark in batches of ${perC*perR} faces — ${perC} across by ${perR} down.</div>`:""}
+    <div class="btnrow" style="margin-top:8px">
+      <button class="btn sm wide" data-act="gofixture">Open the fixture layout</button>
+    </div>
+    <p class="hint">Where each lock physically sits on the bed is set in Fixture.</p>
+  </div></section>`;
+}
+
+/* ---- fixture ---- */
+function panelFixture(){
+  const F = doc.fixture, sh = sheetFaces(), fr = fieldRect();
+  const over = fixtureOversize();
+  const movedN = Object.keys(F.moved).length, skipN = Object.keys(F.skipped).length;
+  const sel = ui.fixSel ? ui.fixSel.split("_").map(Number) : null;
+  const selC = sel ? cellCenter(sel[0], sel[1]) : null;
+
+  return `
+  <section class="sec"><h3>Array</h3><div class="body">
+    <div class="row c2">${fNum("Rows","doc.fixture.rows",1,1,40)}${fNum("Columns","doc.fixture.cols",1,1,40)}</div>
+    <div class="row c2">${fLen("Pitch X — centre to centre","doc.fixture.pitchX")}
+      ${fLen("Pitch Y — centre to centre","doc.fixture.pitchY")}</div>
+    <div class="row c2">${fLen("First centre X","doc.fixture.originX")}
+      ${fLen("First centre Y","doc.fixture.originY")}</div>
+    <div class="row c2">${fLen("Stagger odd rows","doc.fixture.stagger")}
+      ${fSel("Fill order","doc.fixture.order",[["row","Rows, left to right"],
+        ["serp","Rows, snaking"],["col","Columns, top to bottom"]])}</div>
+    <div class="btnrow split">
+      <button class="btn sm" data-act="fxcenter">Centre in field</button>
+      <button class="btn sm" data-act="fxfit">Fill the field</button>
+    </div>
+    <p class="hint">Pitch is centre to centre, so it already includes the gap between locks.
+      Measure your fixture once and type it here.</p>
+  </div></section>
+
+  <section class="sec"><h3>Bed</h3><div class="body">
+    <div class="row">${fSel("Marking field","doc.fixture.field",[[110/MM,"110 mm lens — 110 × 110"],
+      [150/MM,"150 mm lens — 150 × 150"],[0,"No limit — size to the array"]],"num")}</div>
+    <div class="readout">
+      <b>Bed area</b><span>${U.fmt(fr.w,2)} × ${U.fmt(fr.h,2)} ${U.label()}</span>
+      <b>Cells</b><span>${Math.max(1,Math.round(F.rows))*Math.max(1,Math.round(F.cols))}</span>
+      <b>Usable</b><span>${sh.capacity}</span>
+      <b>Faces needed</b><span>${sh.total}</span>
+      <b>Runs</b><span>${sh.batches}</span>
+    </div>
+    ${(F.pitchX < doc.label.w - 1e-6 || F.pitchY < doc.label.h - 1e-6)?`<div class="callout bad">
+      Pitch is tighter than the label (${U.fmt(doc.label.w,3)} × ${U.fmt(doc.label.h,3)} ${U.label()}).
+      Neighbouring marks will overlap — raise the pitch or shrink the label.</div>`:""}
+    ${over.length?`<div class="callout bad">Off the field at ${esc(over.slice(0,4).join(", "))}${over.length>4?" +"+(over.length-4):""}.
+      Reduce the pitch or the count, or centre the array.</div>`:""}
+    ${sh.batches>1?`<div class="callout">More locks than the fixture holds. Load ${sh.capacity} at a time and
+      step through the runs below — each exports its own file.</div>`:""}
+  </div></section>
+
+  ${sh.batches>1?`<section class="sec"><h3>Run</h3><div class="body">
+    <div class="btnrow" style="align-items:center">
+      <button class="btn sm" data-act="fxprev">‹</button>
+      <div style="flex:1;text-align:center;font-family:var(--mono);font-size:13px">
+        Run ${sh.batch+1} of ${sh.batches}<br>
+        <span style="color:var(--text-3);font-size:11px">${esc((sh.faces[0]||{}).short||"")} → ${esc((sh.faces[sh.faces.length-1]||{}).short||"")}</span>
+      </div>
+      <button class="btn sm" data-act="fxnext">›</button>
+    </div>
+  </div></section>`:""}
+
+  <section class="sec"><h3>Cell${sel?` <span class="tag">${sel[0]+1} × ${sel[1]+1}</span>`:""}</h3><div class="body">
+    ${sel?`
+      <div class="readout">
+        <b>Centre X</b><span>${U.fmt(selC.x)} ${U.label()}</span>
+        <b>Centre Y</b><span>${U.fmt(selC.y)} ${U.label()}</span>
+        <b>In millimetres</b><span>${r3(selC.x*MM)}, ${r3(selC.y*MM)}</span>
+        <b>Status</b><span>${doc.fixture.skipped[ui.fixSel]?"skipped":doc.fixture.moved[ui.fixSel]?"moved":"on pitch"}</span>
+      </div>
+      <div class="btnrow split" style="margin-top:8px">
+        <button class="btn sm" data-act="fxtoggle">${doc.fixture.skipped[ui.fixSel]?"Use this cell":"Skip this cell"}</button>
+        <button class="btn sm ghost" data-act="fxsnapback">Back on pitch</button>
+      </div>`
+    : `<div class="empty">Tap a lock on the bed to skip it, or drag it off pitch.</div>`}
+    <div class="divider"></div>
+    <div class="row c2">
+      <div class="btnrow"><button class="btn sm ghost wide" data-act="fxclearmoved">Clear moved (${movedN})</button></div>
+      <div class="btnrow"><button class="btn sm ghost wide" data-act="fxclearskip">Clear skipped (${skipN})</button></div>
+    </div>
+    <p class="hint">A fixture with an odd pocket or a broken clamp: drag that one lock where it really sits,
+      or tap it to leave the pocket empty. The rest of the array stays on pitch.</p>
   </div></section>`;
 }
 
@@ -1837,16 +2261,21 @@ function panelExport(){
   return `
   <section class="sec"><h3>Export</h3><div class="body">
     <div class="readout">
-      <b>Faces on sheet</b><span>${sh.faces.length}</span>
-      <b>Sheet size</b><span>${r3(sh.w*MM)} × ${r3(sh.h*MM)} mm</span>
+      <b>Faces in this run</b><span>${sh.faces.length} of ${sh.capacity} cells</span>
+      <b>Bed size</b><span>${r3(sh.w*MM)} × ${r3(sh.h*MM)} mm</span>
+      <b>Run</b><span>${sh.batch+1} of ${sh.batches}</span>
       <b>Locks</b><span>${doc.roster.length}</span>
     </div>
+    ${sh.batches>1?`<div class="callout">This exports run ${sh.batch+1} only. Step to the next run in
+      Fixture and export again for the rest — or use <b>All runs</b> below.</div>`:""}
     ${issues.length?`<div class="callout bad">Outside the safe area: ${esc(issues.slice(0,3).join(", "))}
       ${issues.length>3?" +"+(issues.length-3)+" more":""}</div>`:""}
     <div class="btnrow split" style="margin-top:10px">
       <button class="btn pri" data-act="exlbrn">.lbrn</button>
       <button class="btn pri" data-act="exsvg">.svg</button>
     </div>
+    ${sh.batches>1?`<div class="btnrow" style="margin-top:6px">
+      <button class="btn sm wide" data-act="exall">All runs — ${sh.batches} .lbrn files</button></div>`:""}
     ${hasImg?`<div class="callout">This design contains a raster graphic. The SVG carries the image;
       the .lbrn carries a guide box for it on a no-output layer. For logos, export SVG and import that —
       or import the logo separately in LightBurn and drop it in the box.</div>`:""}
@@ -1945,8 +2374,12 @@ async function afterEdit(path){
     }
   }
   drawStage(); updateStatus(); renderLayers(); saveLocal();
+  if(path.startsWith("doc.fixture")){
+    doc.fixture.batch = clamp(doc.fixture.batch||0, 0, batchCount()-1);
+    renderRail();
+  }
   if(path.startsWith("doc.sheet")||path.startsWith("doc.laser")||path==="doc.pad"||path.startsWith("doc.label")){
-    if(ui.panel==="batch"||ui.panel==="laser"||ui.panel==="export") renderRail();
+    if(ui.panel==="batch"||ui.panel==="laser"||ui.panel==="export"||ui.panel==="fixture") renderRail();
   }
 }
 
@@ -1978,6 +2411,20 @@ async function action(a){
     case "addrow": doc.roster.push({first:"",last:"",dept:""}); renderRail(); drawStage(); break;
     case "clearroster": doc.roster = doc.roster.map(()=>({first:"",last:"",dept:""})); renderRail(); drawStage(); break;
     case "gocloud": showPanel("cloud"); break;
+    case "gofixture": setStageMode("fixture"); showPanel("fixture"); break;
+    case "fxcenter": centerArray(); fixtureChanged(); break;
+    case "fxfit": fitArrayToField(); fixtureChanged(); fitView(); break;
+    case "fxprev": doc.fixture.batch = Math.max(0, (doc.fixture.batch||0)-1); fixtureChanged(); break;
+    case "fxnext": doc.fixture.batch = Math.min(batchCount()-1, (doc.fixture.batch||0)+1); fixtureChanged(); break;
+    case "fxtoggle": {
+      if(!ui.fixSel) return;
+      const F = doc.fixture;
+      if(F.skipped[ui.fixSel]) delete F.skipped[ui.fixSel]; else F.skipped[ui.fixSel] = true;
+      fixtureChanged(); break;
+    }
+    case "fxsnapback": if(ui.fixSel) delete doc.fixture.moved[ui.fixSel]; fixtureChanged(); break;
+    case "fxclearmoved": doc.fixture.moved = {}; fixtureChanged(); break;
+    case "fxclearskip": doc.fixture.skipped = {}; fixtureChanged(); break;
     case "reset": if(confirm("Discard this design and start from the default layout?")) resetDoc(); break;
     case "loadcsv": {
       const rows = ($("csvBox").value||"").split("\n").map(r=>r.split(/[,\t]/).map(s=>s.trim()))
@@ -1990,6 +2437,15 @@ async function action(a){
     case "darker":  doc.laser.manual=false; doc.laser.trim=clamp(doc.laser.trim+1,-5,5); renderRail(); break;
     case "resettrim": doc.laser.manual=false; doc.laser.trim=0; renderRail(); break;
     case "testgrid": download("hl50e-test-grid.lbrn", testGrid(), "application/xml"); toast("Test grid saved"); break;
+    case "exall": {
+      const n = batchCount(), keep = doc.fixture.batch;
+      for(let b=0;b<n;b++){
+        doc.fixture.batch = b;
+        download(fileStem()+"-run"+(b+1)+".lbrn", exportLBRN(), "application/xml");
+      }
+      doc.fixture.batch = keep; fixtureChanged();
+      toast(n+" run files saved"); break;
+    }
     case "exsvg": download(fileStem()+".svg", exportSVG(), "image/svg+xml"); toast("SVG saved"); break;
     case "exlbrn": download(fileStem()+".lbrn", exportLBRN(), "application/xml"); toast("LightBurn file saved"); break;
     case "savejson": download(fileStem()+".json", JSON.stringify(doc), "application/json"); toast("Project saved"); break;
@@ -2001,7 +2457,7 @@ async function action(a){
         fr.onload = ()=>{ try{
             const d = JSON.parse(fr.result);
             if(!d.faces) throw new Error("shape");
-            doc = d; ui.faceIdx=0; ui.sel=[]; ui.previewIdx=0;
+            doc = migrateDoc(d); ui.faceIdx=0; ui.sel=[]; ui.previewIdx=0;
             reflowAll(); buildAll(); fitView(); toast("Project opened");
           }catch(e){ toast("That file isn't a Markbench project"); } };
         fr.readAsText(file);
@@ -2011,8 +2467,10 @@ async function action(a){
   }
 }
 function fileStem(){
+  const n = batchCount();
   return (doc.name||"markbench").toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"")
-    + "-" + doc.roster.length + "up";
+    + "-" + doc.roster.length + "up"
+    + (n>1 ? "-run"+((doc.fixture.batch||0)+1) : "");
 }
 
 /* ------------------------------------------------------------- test grid --- */
@@ -2212,12 +2670,16 @@ function renderRoster(){
 
 /* --------------------------------------------------------------- statusbar --- */
 function updateStatus(){
-  const sh = sheetFaces(), issues = fitIssues();
+  const sh = sheetFaces(), issues = fitIssues(), off = fixtureOversize();
   const f = $("stFit");
-  if(issues.length){ f.className="warn"; f.textContent = issues.length+" outside safe area"; }
+  if(ui.stageMode==="fixture"){
+    if(off.length){ f.className="bad"; f.textContent = off.length+" off the field"; }
+    else { f.className="good"; f.textContent = "Array fits the field"; }
+  } else if(issues.length){ f.className="warn"; f.textContent = issues.length+" outside safe area"; }
   else { f.className="good"; f.textContent = "Inside limits"; }
-  $("stSheet").textContent =
-    `${sh.faces.length} faces · ${r3(sh.w*MM)}×${r3(sh.h*MM)} mm · ${doc.roster.length} locks`;
+  $("stSheet").textContent = ui.stageMode==="fixture"
+    ? `${sh.faces.length}/${sh.capacity} cells · run ${sh.batch+1} of ${sh.batches} · ${r3(sh.w*MM)}×${r3(sh.h*MM)} mm`
+    : `${sh.faces.length} faces · ${r3(sh.w*MM)}×${r3(sh.h*MM)} mm · ${doc.roster.length} locks`;
   $("docName").textContent = doc.name + " · " + face().name;
 }
 
@@ -2225,6 +2687,18 @@ function updateStatus(){
 function syncSelection(){ renderLayers(); renderProps(); showCoord({x:0,y:0}); }
 function buildAll(){ renderFaceTabs(); renderLayers(); renderRail(); drawStage(); updateStatus(); saveLocal(); }
 
+function fixtureChanged(){
+  doc.fixture.batch = clamp(doc.fixture.batch||0, 0, batchCount()-1);
+  drawStage(); renderRail(); updateStatus(); saveLocal();
+}
+function setStageMode(m){
+  if(ui.stageMode===m) return;
+  ui.stageMode = m;
+  ui.sel = []; ui.fixSel = null;
+  document.querySelectorAll("[data-mode]").forEach(b=>b.setAttribute("aria-pressed", b.dataset.mode===m));
+  document.getElementById("stagewrap").dataset.mode = m;
+  buildAll(); fitView();
+}
 function showPanel(p){
   ui.panel = p; renderRail(); syncNav();
   if(window.matchMedia("(max-width:1079px)").matches){
@@ -2264,7 +2738,7 @@ function restoreLocal(){
     if(!raw) return false;
     const d = JSON.parse(raw);
     if(!d || !Array.isArray(d.faces) || !d.faces.length) return false;
-    doc = d; reflowAll(); return true;
+    doc = migrateDoc(d); reflowAll(); return true;
   }catch(e){ return false; }
 }
 function resetDoc(){
@@ -2291,8 +2765,15 @@ function boot(){
     b.addEventListener("click", ()=>{ ui[key] = !ui[key]; set(); (fn||drawStage)(); });
     set();
   };
+  document.querySelectorAll("[data-mode]").forEach(b=>b.addEventListener("click", ()=>{
+    setStageMode(b.dataset.mode);
+    if(b.dataset.mode==="fixture" && ui.panel!=="fixture") showPanel("fixture");
+  }));
+  document.getElementById("stagewrap").dataset.mode = ui.stageMode;
+
   tog("tGrid","showGrid"); tog("tSnap","snap");
   tog("tLock","showLock"); tog("tRule","showRule", ()=>{ drawStage(); });
+  tog("tNums","showNums");
   $("tFit").addEventListener("click", fitView);
 
   document.querySelectorAll("#nav button").forEach(b=>b.addEventListener("click", ()=>{

@@ -181,6 +181,25 @@ Graphics resample to their printed size at 300/600/1000 dpi and convert to
 **Batch** — the roster. Text tokens `{first}` `{last}` `{dept}` `{n}` `{date}`
 fill per lock, so one design covers the whole batch.
 
+**Fixture** — where the locks physically sit on the bed. Switch the canvas to
+**Fixture** with the toggle at the top-left of the stage. Set rows, columns and
+**pitch** — centre to centre, the number you measure on the jig, not an edge
+gap. The bed shows the lens field, a crosshair on every lock centre, and the
+pitch dimensioned between the first two.
+
+- Drag a lock to move that one off pitch; the rest of the array stays put.
+- Tap a lock to skip that pocket — broken clamp, missing fixture insert.
+- Arrow keys nudge the selected cell by one grid step.
+- *Centre in field* and *Fill the field* set the array up in one press.
+- Stagger offsets odd rows for a brick-pattern fixture.
+
+If the roster needs more locks than the fixture holds, the panel splits the job
+into runs. Step through them, or use **All runs** in Export to write one
+`.lbrn` per load.
+
+Exports are referenced to the marking field, not to the artwork, so the
+coordinates in LightBurn line up with the physical fixture.
+
 **Laser** — material presets with a too-light / too-dark trim ladder, manual
 override, and a 4×4 parameter test grid you can mark on a scrap body.
 

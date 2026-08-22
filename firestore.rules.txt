@@ -1,0 +1,42 @@
+rules_version = '2';
+
+// Markbench — Firestore security rules
+//
+// Publish with:  Firebase console -> Firestore Database -> Rules -> paste -> Publish
+// (or `firebase deploy --only firestore:rules` if you use the CLI)
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------------------------------------------------------------------
+    // OPTION A — anonymous sign-in (default)
+    //
+    // Anyone who can load the page can read and write the shop library.
+    // Fine when the page lives on an internal GitHub Enterprise Pages site
+    // that only employees can reach. Not fine on the public internet.
+    // ---------------------------------------------------------------------
+    match /workspaces/{ws}/{document=**} {
+      allow read, write: if request.auth != null;
+    }
+
+    // ---------------------------------------------------------------------
+    // OPTION B — Google sign-in restricted to your domain
+    //
+    // Set authMode to "google" in the app, enable Google under
+    // Authentication -> Sign-in method, then DELETE the block above and
+    // uncomment this one. Change the domain to yours.
+    // ---------------------------------------------------------------------
+    // match /workspaces/{ws}/{document=**} {
+    //   allow read: if request.auth != null
+    //               && request.auth.token.email.matches('.*@hubbell[.]com$');
+    //   allow write: if request.auth != null
+    //                && request.auth.token.email_verified == true
+    //                && request.auth.token.email.matches('.*@hubbell[.]com$');
+    // }
+
+    // Nothing outside /workspaces is reachable.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
