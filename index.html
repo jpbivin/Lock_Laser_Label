@@ -4,6 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#141923">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <title>Markbench — lockout lock marking</title>
 <style>
 /* ============================================================
@@ -576,6 +579,7 @@ input[type=color]{width:100%;height:30px;padding:2px;background:var(--chrome-2);
    ========================================================================== */
 "use strict";
 
+const BUILD = "2026.08.24-b";
 const MM   = 25.4;
 const CAPR = 0.716;              // cap height / em for the sans faces we ship with
 const FONTS = ["Arial","Arial Black","Arial Narrow","Verdana","Tahoma",
@@ -2560,6 +2564,18 @@ function panelExport(){
       LightBurn's text anchoring shifts a little between versions.</p>
   </div></section>
 
+  <section class="sec"><h3>Build</h3><div class="body">
+    <div class="readout">
+      <b>Version</b><span>${BUILD}</span>
+      <b>Loaded</b><span>${new Date(ui.loadedAt).toLocaleTimeString()}</span>
+    </div>
+    <div class="btnrow" style="margin-top:8px">
+      <button class="btn sm ghost wide" data-act="hardreload">Force a fresh copy from the server</button>
+    </div>
+    <p class="hint">If this version isn't the one you just pushed, the browser is serving a cached page.
+      The button above reloads with a cache-busting parameter.</p>
+  </div></section>
+
   <section class="sec"><h3>Faces</h3><div class="body">
     ${doc.faces.map((f,i)=>`<div class="layer"><span class="nm">${esc(f.name)}</span>
       <span class="pill">${f.els.length} el</span></div>`).join("")}
@@ -2718,6 +2734,12 @@ async function action(a){
     case "fillsafe": { if(!el) return; const s=safeRect(); setBox(el,{x:s.x,y:s.y,w:s.w,h:s.h}); renderRail(); drawStage(); break; }
     case "addrow": doc.roster.push({first:"",last:"",dept:""}); renderRail(); drawStage(); break;
     case "clearroster": doc.roster = doc.roster.map(()=>({first:"",last:"",dept:""})); renderRail(); drawStage(); break;
+    case "hardreload": {
+      const u = new URL(location.href);
+      u.searchParams.set("v", Date.now().toString(36));
+      location.replace(u.toString());
+      break;
+    }
     case "gocloud": showPanel("cloud"); break;
     case "gofixture": setStageMode("fixture"); showPanel("fixture"); break;
     case "fxcenter": centerArray(); fixtureChanged(); break;
@@ -3132,6 +3154,8 @@ function resetDoc(){
 
 /* --------------------------------------------------------------------- boot */
 function boot(){
+  ui.loadedAt = Date.now();
+  console.log("%cMarkbench " + BUILD, "color:#F26419;font-weight:700");
   const restored = restoreLocal();
   buildPalette();
   buildAll();
@@ -3184,7 +3208,7 @@ function boot(){
   document.querySelectorAll(".sheetgrip").forEach(g=>g.addEventListener("click", closeSheets));
   $("btnExport").addEventListener("click", ()=>showPanel("export"));
   $("docName").style.cursor = "pointer";
-  $("docName").title = "Rename";
+  $("docName").title = "Rename — Markbench build " + BUILD;
   $("docName").addEventListener("click", ()=>{
     const n = prompt("Project name", doc.name);
     if(n && n.trim()){ doc.name = n.trim().slice(0,40); updateStatus(); saveLocal(); }
