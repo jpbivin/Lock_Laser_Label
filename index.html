@@ -2111,7 +2111,18 @@ function fAnchor(path){
 const RAIL_TABS = [["props","Element"],["design","Stock"],["batch","Batch"],["fixture","Fixture"],
                    ["machine","Machine"],["material","Material"],["cloud","Cloud"],["export","Export"]];
 
-function renderRail(){
+/* A rebuild replaces every node in the panel, which would rip focus out of
+   whatever the user is typing in. So: if a text field in the panel has focus,
+   mark the panel dirty and rebuild when they leave it. The stage and status
+   bar still update live — only the panel's own re-render waits. */
+function railIsBeingTyped(){
+  const a = document.activeElement, host = $("railBody");
+  return !!(a && host && host.contains(a) &&
+            (a.tagName==="INPUT" || a.tagName==="TEXTAREA"));
+}
+function renderRail(force){
+  if(!force && railIsBeingTyped()){ ui.railDirty = true; return; }
+  ui.railDirty = false;
   const tabs = `<div class="sec"><div class="body" style="padding-top:10px">
     <div class="tabgrid" id="railTabs">${RAIL_TABS.map(([v,t])=>
       `<button type="button" data-tab="${v}" aria-pressed="${ui.panel===v}">${t}</button>`).join("")}</div>
@@ -2558,20 +2569,48 @@ function panelExport(){
 /* ------------------------------------------------------- panel behaviour --- */
 function bindPanel(root){
   root.querySelectorAll("[data-bind]").forEach(inp=>{
+    const numeric = inp.dataset.kind==="len" || inp.dataset.kind==="num";
     const ev = (inp.type==="checkbox"||inp.tagName==="SELECT") ? "change" : "input";
+
+    /* "1." and "-" and "" are on the way to a number, not a number. Committing
+       them would snap the value to 0 and fight the person typing. */
+    const partial = t => t==="" || t==="-" || t==="." || t==="-." ||
+                         /^-?\d*\.$/.test(t) || !/^-?\d*\.?\d*$/.test(t);
+
+    if(numeric){
+      inp.addEventListener("focus", ()=>{ try{ inp.select(); }catch(e){} });
+      inp.addEventListener("blur", ()=>{
+        const t = inp.value.trim();
+        if(partial(t)){                       // put back what the model actually holds
+          const cur = getByPath(inp.dataset.bind);
+          inp.value = inp.dataset.kind==="len"
+            ? U.toDisp(cur||0).toFixed(doc.units==="in"?3:2) : (cur ?? 0);
+        }
+      });
+    }
+
     inp.addEventListener(ev, async ()=>{
       const path = inp.dataset.bind, kind = inp.dataset.kind||"raw";
       let v;
       if(kind==="bool") v = inp.checked;
-      else if(kind==="len") v = U.fromDisp(parseFloat(inp.value)||0);
-      else if(kind==="num") v = parseFloat(inp.value)||0;
+      else if(numeric){
+        const t = inp.value.trim();
+        if(partial(t)) return;                // wait for the rest of the number
+        const n = parseFloat(t);
+        if(!isFinite(n)) return;
+        v = kind==="len" ? U.fromDisp(n) : n;
+      }
       else v = inp.value;
       if(path.startsWith("ui.")){
         if(kind==="raw" && typeof v==="string" && v.trim()!=="" && isFinite(+v)) v = +v;
         ui[path.slice(3)] = v; drawStage(); return;
       }
       setByPath(path, v);
-      if(inp.dataset.reproc){ const el=firstSel(); if(el){ await processImage(el); } }
+      if(inp.dataset.reproc){
+        const lab = inp.parentElement && inp.parentElement.querySelector("span");
+        if(lab) lab.textContent = "Threshold " + Math.round(v);
+        const el=firstSel(); if(el){ await processImage(el); }
+      }
       await afterEdit(path);
     });
   });
@@ -2609,7 +2648,7 @@ function bindPanel(root){
     });
   });
   root.querySelectorAll("#railTabs button").forEach(b=>{
-    b.addEventListener("click", ()=>{ ui.panel = b.dataset.tab; renderRail(); syncNav(); });
+    b.addEventListener("click", ()=>{ ui.panel = b.dataset.tab; renderRail(true); syncNav(); });
   });
   const lensInput = root.querySelector("[data-lenses]");
   if(lensInput) lensInput.addEventListener("change", ()=>{
@@ -3031,7 +3070,7 @@ function syncManualToMaterial(){
 }
 function fixtureChanged(){
   doc.fixture.batch = clamp(doc.fixture.batch||0, 0, batchCount()-1);
-  drawStage(); renderRail(); updateStatus(); saveLocal();
+  drawStage(); renderRail(true); updateStatus(); saveLocal();
 }
 function setStageMode(m){
   if(ui.stageMode===m) return;
@@ -3137,6 +3176,9 @@ function boot(){
     const L = $("leftrail"), open = L.classList.toggle("open");
     $("tLayers").setAttribute("aria-pressed", open);
     $("scrim").classList.toggle("show", open);
+  });
+  $("rightrail").addEventListener("focusout", ()=>{
+    setTimeout(()=>{ if(ui.railDirty && !railIsBeingTyped()) renderRail(true); }, 0);
   });
   $("scrim").addEventListener("click", closeSheets);
   document.querySelectorAll(".sheetgrip").forEach(g=>g.addEventListener("click", closeSheets));
