@@ -121,7 +121,8 @@ workspaces/{workspace}/
   designs/{id}                 name, size, face count, who saved it, when
   designs/{id}/body/main       the design payload (JSON)
   people/{id}                  first, last, dept — the shared roster
-  presets/{id}                 speed, power, frequency, interval, passes
+  presets/{id}                 shared materials, stamped with the machine
+                               they were proved on
 ```
 
 The list view only reads the small metadata records, so opening the app doesn't
@@ -165,7 +166,26 @@ Two ways around it:
 
 ---
 
-## 6. Using it
+## 6. Screen sizes
+
+Three layouts, picked automatically:
+
+| Width | Layout |
+|---|---|
+| under 780 px | Phone — full-bleed canvas, bottom nav, panels as sheets |
+| 780–1179 px | Canvas plus a docked properties column; elements slide in from the left |
+| 1180 px and up | Three columns, nothing hidden |
+
+Touch and mouse are handled separately too — coarse pointers get larger drag
+handles and hit targets, fine pointers get a denser panel.
+
+If you keep a browser window narrow on a desktop (a portrait monitor, or a
+half-screen split) you'll get the phone layout, which is intentional — it's the
+one that works in that space.
+
+---
+
+## 7. Using it
 
 **Stock** — lock body size, label size, padding, units. Padding defines the
 safe area; elements are clamped inside it and reflow when you resize.
@@ -200,8 +220,21 @@ into runs. Step through them, or use **All runs** in Export to write one
 Exports are referenced to the marking field, not to the artwork, so the
 coordinates in LightBurn line up with the physical fixture.
 
-**Laser** — material presets with a too-light / too-dark trim ladder, manual
-override, and a 4×4 parameter test grid you can mark on a scrap body.
+**Machine** — a library of the machines you own. Name, wattage, source type,
+lens field, and hard limits for speed, power, frequency and line interval.
+Every setting anywhere in the app is clamped to the active machine, so a recipe
+proved on a 60 W MOPA can't quietly ask a 50 W Q-switch for speeds it doesn't
+have. The machine name is written into the `.lbrn` as the device, and MOPA
+machines get pulse width as a real parameter.
+
+**Material** — your recipe library. Each material stores speed, power,
+frequency, interval, passes, mode, pulse width, which machine it was proved on,
+and notes on what to watch for. Add materials, edit them, mark them proven.
+
+The too-light / too-dark ladder trims the active recipe without touching what's
+stored; when the mark is right, press **Save trim into material** and the tuned
+numbers become the stored ones. **Capture current** forks a tuned variant into
+a new material instead. A 4×4 parameter test grid is one press away.
 
 **Export** — `.lbrn` with your material layer already configured and each face
 grouped, or `.svg`. Both are written in millimetres at true size.

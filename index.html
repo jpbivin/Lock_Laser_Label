@@ -64,8 +64,9 @@ button,input,select,textarea{font-family:inherit;font-size:inherit;color:inherit
   grid-template-rows:var(--topbar) 1fr var(--statusbar);
   grid-template-columns:1fr;
 }
-@media(min-width:1080px){
-  #app{grid-template-columns:252px 1fr 312px;
+/* wide desktop — three columns, nothing hidden */
+@media(min-width:1180px){
+  #app{grid-template-columns:252px 1fr 322px;
        grid-template-areas:"top top top" "left stage right" "status status status"}
   #topbar{grid-area:top}#leftrail{grid-area:left}#stagewrap{grid-area:stage}
   #rightrail{grid-area:right}#statusbar{grid-area:status}
@@ -110,7 +111,7 @@ button,input,select,textarea{font-family:inherit;font-size:inherit;color:inherit
 }
 #leftrail{border-right:1px solid var(--line)}
 #rightrail{border-left:1px solid var(--line)}
-@media(max-width:1079px){
+@media(max-width:779px){
   .rail{
     position:absolute;left:0;right:0;bottom:calc(var(--navbar) + env(safe-area-inset-bottom));
     max-height:min(66dvh,560px);z-index:30;
@@ -128,7 +129,35 @@ button,input,select,textarea{font-family:inherit;font-size:inherit;color:inherit
   }
   .sheetgrip i{display:block;width:40px;height:4px;border-radius:4px;background:var(--line-2)}
 }
-@media(min-width:1080px){ .sheetgrip{display:none} }
+@media(min-width:780px){ .sheetgrip{display:none} }
+
+/* narrow desktop / tablet — stage plus a docked properties column,
+   elements slide in from the left when you want them */
+@media(min-width:780px) and (max-width:1179px){
+  #app{
+    grid-template-columns:1fr 300px;
+    grid-template-areas:"top top" "stage right" "status status";
+    padding-bottom:0;
+  }
+  #topbar{grid-area:top}
+  #stagewrap{grid-area:stage}
+  #statusbar{grid-area:status}
+  #rightrail{
+    grid-area:right;position:static;transform:none;max-height:none;
+    border-left:1px solid var(--line);border-radius:0;box-shadow:none;
+  }
+  #leftrail{
+    position:absolute;top:var(--topbar);bottom:var(--statusbar);left:0;width:262px;
+    z-index:30;transform:translateX(-102%);transition:transform .2s cubic-bezier(.3,.9,.3,1);
+    border-right:1px solid var(--line);border-radius:0;max-height:none;
+    box-shadow:18px 0 44px rgba(0,0,0,.5);
+  }
+  #leftrail.open{transform:none}
+  #nav{display:none}
+  #tLayers{display:inline-flex}
+}
+@media(min-width:1180px){ #tLayers{display:none} }
+@media(max-width:779px){ #tLayers{display:none} }
 
 /* ---- section blocks in rails ---- */
 .sec{border-bottom:1px solid var(--line)}
@@ -279,7 +308,7 @@ input[type=color]{width:100%;height:30px;padding:2px;background:var(--chrome-2);
 #statusbar .warn{color:var(--amber)}
 #statusbar .bad{color:var(--danger)}
 #statusbar .good{color:var(--ok)}
-@media(max-width:1079px){#statusbar{padding-bottom:0}}
+@media(max-width:779px){#statusbar{padding-bottom:0}}
 
 /* ---- bottom nav (mobile) ---- */
 #nav{
@@ -289,7 +318,7 @@ input[type=color]{width:100%;height:30px;padding:2px;background:var(--chrome-2);
   padding-bottom:env(safe-area-inset-bottom);
   background:var(--chrome);border-top:1px solid var(--line);
 }
-@media(max-width:1079px){
+@media(max-width:779px){
   #nav{display:grid;grid-template-columns:repeat(5,1fr)}
   #nav button{font-size:9px;letter-spacing:.05em}
   #app{padding-bottom:calc(var(--navbar) + env(safe-area-inset-bottom))}
@@ -321,9 +350,19 @@ input[type=color]{width:100%;height:30px;padding:2px;background:var(--chrome-2);
 .chip.wait i{background:var(--amber)}
 @media(max-width:640px){ .chip{padding:5px 7px;font-size:10px} .chip span{display:none} }
 
-.seg.scrollx{overflow-x:auto;scrollbar-width:none}
-.seg.scrollx::-webkit-scrollbar{display:none}
-.seg.scrollx button{flex:0 0 auto;padding:6px 11px}
+/* a grid, not a scroller — every tab is always reachable with a mouse */
+.tabgrid{
+  display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:2px;
+  background:var(--line);border:1px solid var(--line);border-radius:var(--r);overflow:hidden;
+}
+.tabgrid button{
+  border:0;background:var(--chrome-2);color:var(--text-3);cursor:pointer;
+  padding:7px 2px;font-family:var(--cond);font-size:11px;letter-spacing:.06em;
+  text-transform:uppercase;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.tabgrid button:hover{background:var(--chrome-3);color:var(--text-2)}
+.tabgrid button[aria-pressed="true"]{background:var(--chrome-3);color:var(--text);box-shadow:inset 0 -2px 0 var(--accent)}
+@media(max-width:360px){ .tabgrid{grid-template-columns:repeat(3,minmax(0,1fr))} }
 
 /* ---- misc ---- */
 .hint{font-size:12px;color:var(--text-3);line-height:1.45;margin:8px 0 0}
@@ -388,13 +427,13 @@ input[type=color]{width:100%;height:30px;padding:2px;background:var(--chrome-2);
   opacity:0;pointer-events:none;transition:opacity .18s,transform .18s;max-width:88vw;text-align:center;
 }
 #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
-@media(min-width:1080px){#toast{bottom:44px}}
+@media(min-width:780px){#toast{bottom:44px}}
 
 /* modal */
 #scrim{position:absolute;inset:0;background:rgba(6,8,12,.62);z-index:25;opacity:0;pointer-events:none;
   transition:opacity .2s}
 #scrim.show{opacity:1;pointer-events:auto}
-@media(min-width:1080px){#scrim{display:none}}
+@media(min-width:1180px){#scrim{display:none}}
 
 @media (prefers-reduced-motion:reduce){
   *{transition:none!important;animation:none!important}
@@ -403,6 +442,22 @@ input[type=color]{width:100%;height:30px;padding:2px;background:var(--chrome-2);
 @media(max-width:520px){
   #stSheet{display:none}
   .palette{grid-template-columns:1fr 1fr}
+}
+
+/* coarse pointers get bigger targets; fine pointers get a tighter, denser panel */
+@media (pointer:coarse){
+  .btn{padding:9px 13px}
+  .btn.sm{padding:7px 10px}
+  .chk{padding:8px 0}
+  .layer{padding:9px 8px}
+  .layer .mini{padding:5px 6px;font-size:13px}
+  input[type=text],input[type=number],select{padding:9px 9px}
+  .tabgrid button{padding:10px 2px}
+}
+@media (pointer:fine){
+  .rail::-webkit-scrollbar{width:10px}
+  .rail::-webkit-scrollbar-thumb{background:var(--line-2)}
+  .roster{max-height:300px}
 }
 
 </style>
@@ -469,6 +524,7 @@ input[type=color]{width:100%;height:30px;padding:2px;background:var(--chrome-2);
         <button class="tbtn" data-mode="label" aria-pressed="true">Label</button>
         <button class="tbtn" data-mode="fixture" aria-pressed="false">Fixture</button>
       </div>
+      <button class="tbtn" id="tLayers">Elements</button>
       <button class="tbtn" id="tGrid">Grid</button>
       <button class="tbtn" id="tSnap">Snap</button>
       <button class="tbtn" id="tLock">Body</button>
@@ -575,6 +631,72 @@ function shapeEl(o){
   },o);
 }
 
+/* ------------------------------------------------------------- machines --- */
+const MACHINE_TEMPLATES = {
+  hl50e:{ name:"Haas HL-50E", watts:50, source:"q", lens:110, lenses:[110,150],
+          speedMax:4000, powerMax:100, freqMin:20, freqMax:80, freqDefault:40,
+          pulseMin:0, pulseMax:0, intervalDefault:0.02, minInterval:0.005,
+          notes:"Q-switched fiber. Pulse width is fixed; frequency is your heat control." },
+  fiber20:{ name:"20 W fiber (Q-switched)", watts:20, source:"q", lens:110, lenses:[110,150,175],
+          speedMax:3000, powerMax:100, freqMin:20, freqMax:60, freqDefault:30,
+          pulseMin:0, pulseMax:0, intervalDefault:0.02, minInterval:0.005,
+          notes:"Half the power of a 50 W — expect roughly half the speed for the same mark." },
+  fiber30:{ name:"30 W fiber (Q-switched)", watts:30, source:"q", lens:110, lenses:[110,150,175],
+          speedMax:4000, powerMax:100, freqMin:20, freqMax:80, freqDefault:35,
+          pulseMin:0, pulseMax:0, intervalDefault:0.02, minInterval:0.005, notes:"" },
+  mopa60:{ name:"60 W MOPA fiber", watts:60, source:"mopa", lens:110, lenses:[110,150,175,200],
+          speedMax:7000, powerMax:100, freqMin:1, freqMax:400, freqDefault:60,
+          pulseMin:2, pulseMax:500, intervalDefault:0.015, minInterval:0.003,
+          notes:"Adjustable pulse width. Short pulses at high frequency give colour on stainless; long pulses cut deeper." },
+  co2_60:{ name:"60 W CO2", watts:60, source:"co2", lens:0, lenses:[0],
+          speedMax:1000, powerMax:100, freqMin:1, freqMax:50, freqDefault:20,
+          pulseMin:0, pulseMax:0, intervalDefault:0.08, minInterval:0.02,
+          notes:"For organics and coated metals — not bare metal. Frequency here is PPI, not kHz." },
+  custom:{ name:"Custom machine", watts:50, source:"q", lens:110, lenses:[110,150],
+          speedMax:4000, powerMax:100, freqMin:1, freqMax:200, freqDefault:30,
+          pulseMin:0, pulseMax:0, intervalDefault:0.02, minInterval:0.005, notes:"" }
+};
+const SOURCE_NAMES = { q:"Q-switched fiber", mopa:"MOPA fiber", co2:"CO2", other:"Other" };
+
+function makeMachine(tmplKey){
+  const t = MACHINE_TEMPLATES[tmplKey] || MACHINE_TEMPLATES.custom;
+  return Object.assign({ id:uid("m_") }, JSON.parse(JSON.stringify(t)));
+}
+
+/* ------------------------------------------------------------- materials --- */
+const MATERIAL_SEEDS = [
+  { id:"anodized", name:"Anodized aluminium — white mark", speed:1200, power:45, freq:40,
+    interval:0.02, passes:1, fill:"scan", pulse:0, proven:false,
+    note:"Anodising is microns thick. Ablate it, don't engrave it. Brown halo or burnt-looking letters means go faster before you drop power." },
+  { id:"alumBare", name:"Bare / mill aluminium — dark", speed:400, power:85, freq:30,
+    interval:0.012, passes:2, fill:"scan", pulse:0, proven:false,
+    note:"Bare aluminium resists contrast. Two lighter passes read darker than one heavy pass and warp the body less." },
+  { id:"ssAnneal", name:"Stainless — anneal (black, no depth)", speed:150, power:35, freq:60,
+    interval:0.010, passes:1, fill:"scan", pulse:0, proven:false,
+    note:"Annealing wants heat, not removal. High frequency, slow speed, 1–2 mm out of focus. Grey instead of black means slow down before adding power." },
+  { id:"ssEngrave", name:"Stainless / carbon steel — engrave", speed:600, power:90, freq:30,
+    interval:0.020, passes:2, fill:"scan", pulse:0, proven:false,
+    note:"In focus, mid frequency. Past 90 % power, add a pass instead." },
+  { id:"painted", name:"Powder-coated or painted steel", speed:1500, power:40, freq:40,
+    interval:0.030, passes:1, fill:"scan", pulse:0, proven:false,
+    note:"You're removing coating only. Stop when the substrate shows — extra dose scorches a ring around the letters." },
+  { id:"brass", name:"Brass / bronze", speed:400, power:80, freq:25,
+    interval:0.020, passes:1, fill:"scan", pulse:0, proven:false,
+    note:"Reflective but forgiving. Lower frequency gives a cleaner, deeper cut." },
+  { id:"thermo", name:"Thermoplastic lock body", speed:1800, power:22, freq:30,
+    interval:0.030, passes:1, fill:"scan", pulse:0, proven:false,
+    note:"Plastic foams rather than cuts. Too much dose melts the edge and closes the letters up. Ventilate." },
+  { id:"laminate", name:"Laminate / engraving stock", speed:2000, power:20, freq:30,
+    interval:0.030, passes:1, fill:"scan", pulse:0, proven:false,
+    note:"Very light dose. If the core colour isn't showing, add a pass instead of power." },
+  { id:"titanium", name:"Titanium — colour anneal", speed:500, power:30, freq:60,
+    interval:0.015, passes:1, fill:"scan", pulse:0, proven:false,
+    note:"Colour is almost pure dose. Small speed changes swing the colour — move one trim step at a time." }
+];
+function seedMaterials(machineId){
+  return MATERIAL_SEEDS.map(m => Object.assign({}, m, {machineId:machineId||null}));
+}
+
 function defaultDoc(){
   const d = {
     v:2, units:"in", name:"Lockout lock",
@@ -588,11 +710,38 @@ function defaultDoc(){
               originX:0.90, originY:0.85, stagger:0,
               order:"row", field:110/MM, batch:0,
               moved:{}, skipped:{} },
-    laser:{ material:"anodized", trim:0, manual:false,
-            speed:0, power:0, freq:0, interval:0, passes:1, fill:"scan" }
+    laser:{ materialId:"anodized", trim:0, manual:false,
+            speed:0, power:0, freq:0, interval:0, passes:1, fill:"scan", pulse:0 }
   };
+  const m = makeMachine("hl50e");
+  d.machines = [m];
+  d.machineId = m.id;
+  d.materials = seedMaterials(m.id);
+  d.fixture.field = m.lens/MM;
   d.faces = [ seedOwnershipFace(d), seedDangerFace(d) ];
   return d;
+}
+
+/* -------------------------------------------------- machine / material --- */
+function activeMachine(){
+  return (doc.machines||[]).find(m=>m.id===doc.machineId) || (doc.machines||[])[0] || MACHINE_TEMPLATES.hl50e;
+}
+function machineMaterials(){
+  const mid = doc.machineId;
+  return (doc.materials||[]).filter(m => !m.machineId || m.machineId===mid);
+}
+function activeMaterial(){
+  const list = doc.materials||[];
+  return list.find(m=>m.id===doc.laser.materialId) || machineMaterials()[0] || list[0] || MATERIAL_SEEDS[0];
+}
+function clampToMachine(p){
+  const M = activeMachine();
+  return { speed: clamp(Math.round(p.speed), 1, M.speedMax||99999),
+           power: clamp(Math.round(p.power), 1, M.powerMax||100),
+           freq:  clamp(p.freq, M.freqMin||1, M.freqMax||1000),
+           interval: Math.max(M.minInterval||0.001, p.interval),
+           passes: clamp(Math.round(p.passes), 1, 50),
+           pulse: M.source==="mopa" ? clamp(p.pulse||M.pulseMin||2, M.pulseMin||1, M.pulseMax||500) : 0 };
 }
 
 function seedOwnershipFace(d){
@@ -648,6 +797,29 @@ function migrateDoc(d){
                   originX: pitchX/2 + 0.1, originY: pitchY/2 + 0.1,
                   stagger:0, order:"row", field, batch:0, moved:{}, skipped:{} };
   }
+  /* machines + material library arrived after the first releases */
+  if(!Array.isArray(d.machines) || !d.machines.length){
+    const m = makeMachine("hl50e");
+    if(d.sheet && d.sheet.field) m.lens = Math.round(d.sheet.field*MM) || 110;
+    d.machines = [m]; d.machineId = m.id;
+  }
+  if(!d.machineId || !d.machines.some(m=>m.id===d.machineId)) d.machineId = d.machines[0].id;
+  d.machines.forEach(m=>{
+    const t = MACHINE_TEMPLATES.custom;
+    Object.keys(t).forEach(k=>{ if(m[k]===undefined) m[k]=t[k]; });
+    if(!Array.isArray(m.lenses) || !m.lenses.length) m.lenses = [m.lens||110];
+  });
+  if(!Array.isArray(d.materials) || !d.materials.length) d.materials = seedMaterials(d.machineId);
+  d.materials.forEach(m=>{ if(!m.id) m.id = uid("mat_"); if(m.fill===undefined) m.fill="scan";
+                           if(m.passes===undefined) m.passes=1; if(m.pulse===undefined) m.pulse=0; });
+  d.laser = d.laser || {};
+  if(!d.laser.materialId){
+    d.laser.materialId = d.laser.material && d.materials.some(m=>m.id===d.laser.material)
+      ? d.laser.material : (d.materials[0] && d.materials[0].id);
+  }
+  delete d.laser.material;
+  if(d.laser.pulse===undefined) d.laser.pulse = 0;
+
   const f = d.fixture;
   f.moved = f.moved || {}; f.skipped = f.skipped || {};
   if(f.batch === undefined) f.batch = 0;
@@ -1065,6 +1237,8 @@ function exportSVG(){
 
 /* ---------------------------------------------------- LightBurn serialiser --- */
 function lbCut(idx, name, p, isCut, output){
+  const M = (typeof activeMachine==="function") ? activeMachine() : {source:"q"};
+  const qp = M.source==="mopa" ? Math.round(p.pulse||M.pulseMin||2) : 200;
   return `  <CutSetting type="${isCut?"Cut":"Scan"}">
     <index Value="${idx}"/>
     <name Value="${esc(name)}"/>
@@ -1074,7 +1248,7 @@ function lbCut(idx, name, p, isCut, output){
     <frequency Value="${Math.round(p.freq*1000)}"/>
     <numPasses Value="${p.passes}"/>
     <interval Value="${p.interval}"/>
-    <QPulseWidth Value="200"/>
+    <QPulseWidth Value="${qp}"/>
     <doOutput Value="${output?1:0}"/>
     <priority Value="${idx}"/>
     <tabCount Value="1"/>
@@ -1120,9 +1294,9 @@ function primLbrn(p, ox, oy, H, pad){
 function exportLBRN(){
   const sh = sheetFaces(), H = sh.h*MM, p = laserEffective();
   let s = `<?xml version="1.0" encoding="UTF-8"?>\n`
-    + `<LightBurnProject AppVersion="1.7.00" DeviceName="Haas HL-50E" FormatVersion="1" `
+    + `<LightBurnProject AppVersion="1.7.00" DeviceName="${esc(activeMachine().name)}" FormatVersion="1" `
     + `MaterialHeight="0" MirrorX="False" MirrorY="False">\n`;
-  s += lbCut(0, MATERIALS[doc.laser.material].name.slice(0,30), p, doc.laser.fill==="cut", true);
+  s += lbCut(0, activeMaterial().name.slice(0,30), p, doc.laser.fill==="cut", true);
   s += lbCut(1, "Guide — no output", {power:10,speed:1000,freq:30,passes:1,interval:0.05}, true, false);
   sh.faces.forEach(f=>{
     s += `  <Shape Type="Group">\n    <XForm>1 0 0 1 0 0</XForm>\n    <Children>\n`;
@@ -1174,6 +1348,10 @@ const ui = {
 };
 
 const stage = document.getElementById("stage");
+/* touch needs a bigger grab area than a mouse does */
+const coarse = () => window.matchMedia && window.matchMedia("(pointer:coarse)").matches;
+const HANDLE_PX = () => coarse() ? 13 : 9;
+const GRAB_PX   = () => coarse() ? 15 : 9;
 const face = () => doc.faces[ui.faceIdx] || doc.faces[0];
 const selEls = () => face().els.filter(e => ui.sel.includes(e.id));
 const firstSel = () => selEls()[0] || null;
@@ -1269,7 +1447,7 @@ function drawStage(){
   });
   const one = ui.sel.length===1 ? firstSel() : null;
   if(one && !one.locked){
-    const b = boxOf(one), c=[b.x+b.w/2,b.y+b.h/2], hs = px(9);
+    const b = boxOf(one), c=[b.x+b.w/2,b.y+b.h/2], hs = px(HANDLE_PX());
     const tr = one.rot?` transform="rotate(${r3(one.rot)} ${r3(c[0])} ${r3(c[1])})"`:"";
     s += `<g${tr}>`;
     HANDLES.forEach(h=>{
@@ -1499,7 +1677,7 @@ function hitElement(w){
     if(el.visible===false || el.locked) continue;
     const b = boxOf(el), c=[b.x+b.w/2,b.y+b.h/2];
     const p = unrot(w, c, el.rot||0);
-    const m = 4/ui.scale;
+    const m = (coarse()?6:3)/ui.scale;
     if(p.x>=b.x-m && p.x<=b.x+b.w+m && p.y>=b.y-m && p.y<=b.y+b.h+m) return el;
   }
   return null;
@@ -1508,7 +1686,7 @@ function hitHandle(w){
   if(ui.sel.length!==1) return null;
   const el = firstSel(); if(!el || el.locked) return null;
   const b = boxOf(el), c=[b.x+b.w/2,b.y+b.h/2];
-  const p = unrot(w, c, el.rot||0), t = 10/ui.scale;
+  const p = unrot(w, c, el.rot||0), t = GRAB_PX()/ui.scale;
   for(const h of HANDLES){
     const q = handlePt(b,h);
     if(Math.abs(p.x-q[0])<t && Math.abs(p.y-q[1])<t) return h;
@@ -1777,34 +1955,15 @@ window.addEventListener("resize", ()=>{ drawStage(); });
    MARKBENCH — panels, image pipeline, laser recipes, export, boot
    ========================================================================== */
 
-/* ------------------------------------------------------------- materials --- */
-const MATERIALS = {
-  anodized:{ name:"Anodized aluminium — white mark", speed:1200, power:45, freq:40, interval:0.02, passes:1,
-    note:"Anodising is microns thick. Ablate it, don't engrave it. Brown halo or burnt-looking letters means go faster before you drop power." },
-  alumBare:{ name:"Bare / mill aluminium — dark", speed:400, power:85, freq:30, interval:0.012, passes:2,
-    note:"Bare aluminium resists contrast. Two lighter passes read darker than one heavy pass and warp the body less." },
-  ssAnneal:{ name:"Stainless — anneal (black, no depth)", speed:150, power:35, freq:60, interval:0.010, passes:1,
-    note:"Annealing wants heat, not removal. High frequency, slow speed, 1–2 mm out of focus. Grey instead of black means slow down before adding power." },
-  ssEngrave:{ name:"Stainless / carbon steel — engrave", speed:600, power:90, freq:30, interval:0.020, passes:2,
-    note:"In focus, mid frequency. Past 90 % power, add a pass instead." },
-  painted:{ name:"Powder-coated or painted steel", speed:1500, power:40, freq:40, interval:0.030, passes:1,
-    note:"You're removing coating only. Stop when the substrate shows — extra dose scorches a ring around the letters." },
-  brass:{ name:"Brass / bronze", speed:400, power:80, freq:25, interval:0.020, passes:1,
-    note:"Reflective but forgiving. Lower frequency gives a cleaner, deeper cut." },
-  thermo:{ name:"Thermoplastic lock body", speed:1800, power:22, freq:30, interval:0.030, passes:1,
-    note:"Plastic foams rather than cuts. Too much dose melts the edge and closes the letters up. Ventilate." },
-  laminate:{ name:"Laminate / engraving stock", speed:2000, power:20, freq:30, interval:0.030, passes:1,
-    note:"Very light dose. If the core colour isn't showing, add a pass instead of power." },
-  titanium:{ name:"Titanium — colour anneal", speed:500, power:30, freq:60, interval:0.015, passes:1,
-    note:"Colour is almost pure dose. Small speed changes swing the colour — move one trim step at a time." }
-};
+/* -------------------------------------------------------- laser settings --- */
 function laserEffective(){
-  const L = doc.laser;
-  if(L.manual) return {speed:L.speed, power:L.power, freq:L.freq, interval:L.interval, passes:L.passes};
-  const m = MATERIALS[L.material], n = L.trim;
-  return { speed: Math.max(20, Math.round(m.speed*Math.pow(0.82,n)/10)*10),
-           power: clamp(Math.round(m.power*Math.pow(1.05,n)), 5, 100),
-           freq:m.freq, interval:m.interval, passes:m.passes };
+  const L = doc.laser, M = activeMachine();
+  if(L.manual) return clampToMachine({ speed:L.speed, power:L.power, freq:L.freq,
+                                       interval:L.interval, passes:L.passes, pulse:L.pulse });
+  const m = activeMaterial(), n = L.trim||0;
+  return clampToMachine({ speed: Math.round(m.speed*Math.pow(0.82,n)/10)*10,
+                          power: Math.round(m.power*Math.pow(1.05,n)),
+                          freq:m.freq, interval:m.interval, passes:m.passes, pulse:m.pulse });
 }
 
 /* ------------------------------------------------------------ image pipe --- */
@@ -1924,9 +2083,10 @@ function fArea(label, path, rows){
 }
 function fSel(label, path, opts, kind){
   const cur = getByPath(path);
+  const curS = (cur===null||cur===undefined) ? "" : String(cur);
   return `<label class="fld"><span>${label}</span><select data-bind="${path}"${kind?` data-kind="${kind}"`:""}>`
     + opts.map(o=>{ const [v,t] = Array.isArray(o)?o:[o,o];
-        return `<option value="${esc(v)}"${String(v)===String(cur)?" selected":""}>${esc(t)}</option>`; }).join("")
+        return `<option value="${esc(v)}"${String(v)===curS?" selected":""}>${esc(t)}</option>`; }).join("")
     + `</select></label>`;
 }
 function fChk(label, path){
@@ -1948,11 +2108,12 @@ function fAnchor(path){
 }
 
 /* ------------------------------------------------------------ right rail --- */
-const RAIL_TABS = [["props","Element"],["design","Stock"],["batch","Batch"],["fixture","Fixture"],["laser","Laser"],["cloud","Cloud"],["export","Export"]];
+const RAIL_TABS = [["props","Element"],["design","Stock"],["batch","Batch"],["fixture","Fixture"],
+                   ["machine","Machine"],["material","Material"],["cloud","Cloud"],["export","Export"]];
 
 function renderRail(){
   const tabs = `<div class="sec"><div class="body" style="padding-top:10px">
-    <div class="seg scrollx" id="railTabs">${RAIL_TABS.map(([v,t])=>
+    <div class="tabgrid" id="railTabs">${RAIL_TABS.map(([v,t])=>
       `<button type="button" data-tab="${v}" aria-pressed="${ui.panel===v}">${t}</button>`).join("")}</div>
   </div></div>`;
   let body = "";
@@ -1960,7 +2121,8 @@ function renderRail(){
   else if(ui.panel==="design") body = panelDesign();
   else if(ui.panel==="batch")  body = panelBatch();
   else if(ui.panel==="fixture") body = panelFixture();
-  else if(ui.panel==="laser")  body = panelLaser();
+  else if(ui.panel==="machine")  body = panelMachine();
+  else if(ui.panel==="material") body = panelMaterial();
   else if(ui.panel==="cloud")  body = panelCloud();
   else body = panelExport();
   $("railBody").innerHTML = tabs + body;
@@ -2202,19 +2364,99 @@ function panelFixture(){
   </div></section>`;
 }
 
-/* ---- laser ---- */
-function panelLaser(){
-  const p = laserEffective(), m = MATERIALS[doc.laser.material];
+/* ---- machine ---- */
+function panelMachine(){
+  const M = activeMachine();
+  const mopa = M.source==="mopa";
+  const idx = doc.machines.findIndex(m=>m.id===M.id);
+  return `
+  <section class="sec"><h3>Machine <span class="tag">${doc.machines.length} on file</span></h3><div class="body">
+    <div class="row">${fSel("Marking on","doc.machineId",doc.machines.map(m=>[m.id,m.name]))}</div>
+    <div class="btnrow split">
+      <button class="btn sm" data-act="machadd">Add machine</button>
+      <button class="btn sm ghost" data-act="machdup">Duplicate</button>
+      ${doc.machines.length>1?`<button class="btn sm ghost dngr" data-act="machdel">Delete</button>`:""}
+    </div>
+  </div></section>
+
+  <section class="sec"><h3>Identity</h3><div class="body">
+    <div class="row">${fText("Name","doc.machines."+idx+".name")}</div>
+    <div class="row c2">${fNum("Wattage","doc.machines."+idx+".watts",1,1,2000)}
+      ${fSel("Source","doc.machines."+idx+".source",Object.entries(SOURCE_NAMES))}</div>
+    <p class="hint">The name is written into the .lbrn as the device, so you can tell at a glance which
+      machine a file was cut for.</p>
+  </div></section>
+
+  <section class="sec"><h3>Optics</h3><div class="body">
+    <div class="row c2">${fNum("Lens field (mm)","doc.machines."+idx+".lens",5,10,600)}
+      <label class="fld"><span>Available lenses</span>
+        <input type="text" value="${esc((M.lenses||[]).join(", "))}" data-lenses="${idx}"
+          placeholder="110, 150, 175"></label></div>
+    <div class="btnrow"><button class="btn sm wide" data-act="uselens">Set the fixture bed to ${M.lens} mm</button></div>
+    <p class="hint">Swapping lenses changes both the field and the spot size. Materials you proved on one
+      lens usually need a nudge on another.</p>
+  </div></section>
+
+  <section class="sec"><h3>Limits</h3><div class="body">
+    <div class="row c2">${fNum("Max speed mm/s","doc.machines."+idx+".speedMax",50,10,20000)}
+      ${fNum("Max power %","doc.machines."+idx+".powerMax",1,1,100)}</div>
+    <div class="row c3">${fNum("Freq min kHz","doc.machines."+idx+".freqMin",1,0.1,2000)}
+      ${fNum("Freq max kHz","doc.machines."+idx+".freqMax",1,1,2000)}
+      ${fNum("Freq default","doc.machines."+idx+".freqDefault",1,1,2000)}</div>
+    <div class="row c2">${fNum("Finest line interval mm","doc.machines."+idx+".minInterval",0.001,0.001,1)}
+      ${fNum("Default interval mm","doc.machines."+idx+".intervalDefault",0.005,0.001,1)}</div>
+    ${mopa?`<div class="row c2">${fNum("Pulse min ns","doc.machines."+idx+".pulseMin",1,1,2000)}
+      ${fNum("Pulse max ns","doc.machines."+idx+".pulseMax",1,1,2000)}</div>`:""}
+    <p class="hint">Every setting anywhere in the app is clamped to these, so a recipe proved on a 60 W
+      machine can't quietly ask this one for speeds it doesn't have.</p>
+  </div></section>
+
+  <section class="sec"><h3>Notes</h3><div class="body">
+    <div class="row">${fArea("Anything the next operator should know","doc.machines."+idx+".notes",3)}</div>
+  </div></section>`;
+}
+
+/* ---- material ---- */
+function panelMaterial(){
+  const M = activeMachine(), mat = activeMaterial();
+  const list = machineMaterials();
+  const idx = doc.materials.findIndex(m=>m.id===mat.id);
+  const p = laserEffective();
+  const mopa = M.source==="mopa";
   let ladder = "";
   for(let i=-5;i<=5;i++){
     const g = Math.round(232-(i+5)*20);
-    ladder += `<div class="${!doc.laser.manual && i===doc.laser.trim?"cur":""}"
+    ladder += `<div class="${!doc.laser.manual && i===(doc.laser.trim||0)?"cur":""}"
                  style="background:rgb(${g},${g},${g})"></div>`;
   }
   return `
-  <section class="sec"><h3>Machine <span class="tag">HL-50E · 50 W</span></h3><div class="body">
-    <div class="row">${fSel("Material","doc.laser.material",Object.entries(MATERIALS).map(([k,v])=>[k,v.name]))}</div>
-    <div class="callout">${esc(m.note)}</div>
+  <section class="sec"><h3>Material <span class="tag">${list.length} for this machine</span></h3><div class="body">
+    <div class="row">${fSel("Marking","doc.laser.materialId",
+      doc.materials.map(m=>[m.id, (m.proven?"✓ ":"") + m.name
+        + (m.machineId && m.machineId!==doc.machineId ? "  (other machine)" : "")]))}</div>
+    <div class="btnrow split">
+      <button class="btn sm" data-act="matnew">New</button>
+      <button class="btn sm" data-act="matcapture">Capture current</button>
+      <button class="btn sm ghost dngr" data-act="matdel">Delete</button>
+    </div>
+    ${mat.note?`<div class="callout">${esc(mat.note)}</div>`:""}
+  </div></section>
+
+  <section class="sec"><h3>Proven settings</h3><div class="body">
+    <div class="row">${fText("Name","doc.materials."+idx+".name")}</div>
+    <div class="row c3">${fNum("Speed mm/s","doc.materials."+idx+".speed",10,1,M.speedMax)}
+      ${fNum("Power %","doc.materials."+idx+".power",1,1,M.powerMax)}
+      ${fNum("Freq kHz","doc.materials."+idx+".freq",1,M.freqMin,M.freqMax)}</div>
+    <div class="row c3">${fNum("Interval mm","doc.materials."+idx+".interval",0.005,M.minInterval,1)}
+      ${fNum("Passes","doc.materials."+idx+".passes",1,1,50)}
+      ${fSel("Mode","doc.materials."+idx+".fill",[["scan","Fill"],["cut","Line"]])}</div>
+    ${mopa?`<div class="row">${fNum("Pulse width ns","doc.materials."+idx+".pulse",1,M.pulseMin,M.pulseMax)}</div>`:""}
+    <div class="row c2">${fSel("Machine","doc.materials."+idx+".machineId",
+        [["","Any machine"], ...doc.machines.map(m=>[m.id,m.name])])}
+      ${fChk("Proven on a real part","doc.materials."+idx+".proven")}</div>
+    <div class="row">${fArea("Notes — what to watch for","doc.materials."+idx+".note",3)}</div>
+    <p class="hint">These are the numbers the material is stored with. Trimming below doesn't overwrite
+      them — press <b>Save trim into material</b> when you're happy.</p>
   </div></section>
 
   <section class="sec"><h3>How did the mark come out?</h3><div class="body">
@@ -2224,32 +2466,41 @@ function panelLaser(){
     </div>
     <div class="ladder">${ladder}</div>
     <div class="laddercap"><span>Lighter</span>
-      <span>${doc.laser.manual?"Manual":doc.laser.trim===0?"Preset":(doc.laser.trim>0?"+":"")+doc.laser.trim}</span>
+      <span>${doc.laser.manual?"Manual":(doc.laser.trim||0)===0?"As stored":((doc.laser.trim>0?"+":"")+doc.laser.trim)}</span>
       <span>Darker</span></div>
-    <div class="btnrow" style="margin-top:8px"><button class="btn sm ghost wide" data-act="resettrim">Back to preset</button></div>
     <div class="readout">
       <b>Speed</b><span>${p.speed} mm/s</span>
       <b>Power</b><span>${p.power} %</span>
       <b>Frequency</b><span>${p.freq} kHz</span>
       <b>Line interval</b><span>${p.interval} mm</span>
       <b>Passes</b><span>${p.passes}</span>
+      ${mopa?`<b>Pulse</b><span>${p.pulse} ns</span>`:""}
       <b>Layer</b><span>${doc.laser.fill==="cut"?"Line":"Fill"}</span>
     </div>
-    ${doc.laser.trim>=4?`<div class="callout bad">You're at the top of the ladder. Add a pass or change
+    <div class="btnrow split" style="margin-top:8px">
+      <button class="btn sm" data-act="savetrim" ${(doc.laser.trim||0)===0&&!doc.laser.manual?"disabled":""}>Save trim into material</button>
+      <button class="btn sm ghost" data-act="resettrim">Back to stored</button>
+    </div>
+    ${(doc.laser.trim||0)>=4?`<div class="callout bad">Top of the ladder. Add a pass or pick a different
       material rather than pushing further.</div>`:""}
-    ${doc.laser.trim<=-4?`<div class="callout bad">You're at the bottom. If it still marks too dark the
-      beam is likely out of focus, or it's the wrong preset.</div>`:""}
+    ${(doc.laser.trim||0)<=-4?`<div class="callout bad">Bottom of the ladder. If it still marks too dark the
+      beam is likely out of focus, or it's the wrong material.</div>`:""}
+    ${p.power>=M.powerMax?`<div class="callout">At this machine's power ceiling.</div>`:""}
+    ${p.speed>=M.speedMax?`<div class="callout">At this machine's speed ceiling.</div>`:""}
   </div></section>
 
   <section class="sec"><h3>Manual override</h3><div class="body">
-    <div class="row c3">${fNum("Speed mm/s","doc.laser.speed",10,10)}
-      ${fNum("Power %","doc.laser.power",1,1,100)}${fNum("Freq kHz","doc.laser.freq",1,1,200)}</div>
-    <div class="row c3">${fNum("Interval mm","doc.laser.interval",0.005,0.005)}
-      ${fNum("Passes","doc.laser.passes",1,1,20)}
+    <div class="row c3">${fNum("Speed mm/s","doc.laser.speed",10,1,M.speedMax)}
+      ${fNum("Power %","doc.laser.power",1,1,M.powerMax)}
+      ${fNum("Freq kHz","doc.laser.freq",1,M.freqMin,M.freqMax)}</div>
+    <div class="row c3">${fNum("Interval mm","doc.laser.interval",0.005,M.minInterval,1)}
+      ${fNum("Passes","doc.laser.passes",1,1,50)}
       ${fSel("Mode","doc.laser.fill",[["scan","Fill"],["cut","Line"]])}</div>
+    ${mopa?`<div class="row">${fNum("Pulse width ns","doc.laser.pulse",1,M.pulseMin,M.pulseMax)}</div>`:""}
     <div class="btnrow"><button class="btn sm wide" data-act="testgrid">Download 4 × 4 parameter test grid</button></div>
     <p class="hint">The grid marks sixteen squares, each on its own LightBurn layer, sweeping speed against
-      power around your current numbers. Run it on a scrap body, pick the square you like, type those in.</p>
+      power around the current numbers. Run it on a scrap body, pick the square you like, type those in,
+      then save them into the material so nobody repeats it.</p>
   </div></section>`;
 }
 
@@ -2360,6 +2611,13 @@ function bindPanel(root){
   root.querySelectorAll("#railTabs button").forEach(b=>{
     b.addEventListener("click", ()=>{ ui.panel = b.dataset.tab; renderRail(); syncNav(); });
   });
+  const lensInput = root.querySelector("[data-lenses]");
+  if(lensInput) lensInput.addEventListener("change", ()=>{
+    const i = +lensInput.dataset.lenses;
+    const v = lensInput.value.split(/[,\s]+/).map(x=>parseFloat(x)).filter(x=>x>0);
+    doc.machines[i].lenses = v.length ? v : [doc.machines[i].lens];
+    renderRail(); saveLocal();
+  });
   root.querySelectorAll("[data-act]").forEach(b=> b.addEventListener("click", ()=>action(b.dataset.act)));
   if(root.querySelector("#roster")) renderRoster();
 }
@@ -2374,12 +2632,23 @@ async function afterEdit(path){
     }
   }
   drawStage(); updateStatus(); renderLayers(); saveLocal();
+  if(path==="doc.machineId"){
+    if(!machineMaterials().some(m=>m.id===doc.laser.materialId)){
+      const first = machineMaterials()[0];
+      if(first) doc.laser.materialId = first.id;
+    }
+    doc.laser.trim = 0; doc.laser.manual = false;
+    renderRail(); updateStatus();
+  }
+  if(path==="doc.laser.materialId"){ doc.laser.trim=0; doc.laser.manual=false; renderRail(); }
+  if(path.startsWith("doc.machines")||path.startsWith("doc.materials")) renderRail();
   if(path.startsWith("doc.fixture")){
     doc.fixture.batch = clamp(doc.fixture.batch||0, 0, batchCount()-1);
     renderRail();
   }
+  if(path.startsWith("doc.laser.")&&doc.laser.manual!==true&&/speed|power|freq|interval|passes|pulse/.test(path)) doc.laser.manual = true;
   if(path.startsWith("doc.sheet")||path.startsWith("doc.laser")||path==="doc.pad"||path.startsWith("doc.label")){
-    if(ui.panel==="batch"||ui.panel==="laser"||ui.panel==="export"||ui.panel==="fixture") renderRail();
+    if(ui.panel==="batch"||ui.panel==="material"||ui.panel==="export"||ui.panel==="fixture") renderRail();
   }
 }
 
@@ -2433,9 +2702,77 @@ async function action(a){
       doc.roster = rows.map(r=>({first:r[0]||"", last:r[1]||"", dept:r[2]||""}));
       ui.previewIdx = 0; renderRail(); drawStage(); toast(rows.length+" locks loaded"); break;
     }
+    case "machadd": {
+      const keys = Object.keys(MACHINE_TEMPLATES);
+      const pick = prompt("Start from a template:\n" + keys.map((k,i)=>(i+1)+") "+MACHINE_TEMPLATES[k].name).join("\n"), "1");
+      const k = keys[(parseInt(pick)||1)-1] || "custom";
+      const m = makeMachine(k);
+      const nm = prompt("Name this machine", m.name); if(nm) m.name = nm.slice(0,40);
+      doc.machines.push(m); doc.machineId = m.id;
+      renderRail(); updateStatus(); saveLocal(); toast("Machine added"); break;
+    }
+    case "machdup": {
+      const m = JSON.parse(JSON.stringify(activeMachine()));
+      m.id = uid("m_"); m.name = m.name + " copy";
+      doc.machines.push(m); doc.machineId = m.id; renderRail(); saveLocal(); break;
+    }
+    case "machdel": {
+      if(doc.machines.length<2) return;
+      const gone = activeMachine();
+      if(!confirm("Delete "+gone.name+"? Materials tied to it become 'any machine'.")) return;
+      doc.machines = doc.machines.filter(m=>m.id!==gone.id);
+      doc.materials.forEach(mt=>{ if(mt.machineId===gone.id) mt.machineId = null; });
+      doc.machineId = doc.machines[0].id;
+      renderRail(); updateStatus(); saveLocal(); break;
+    }
+    case "uselens": {
+      doc.fixture.field = activeMachine().lens/MM;
+      doc.fixture.batch = 0; centerArray();
+      drawStage(); renderRail(); updateStatus(); saveLocal();
+      toast("Bed set to "+activeMachine().lens+" mm"); break;
+    }
+    case "matnew": {
+      const nm = (prompt("Name the material")||"").trim(); if(!nm) return;
+      const M = activeMachine();
+      const mat = { id:uid("mat_"), name:nm, machineId:doc.machineId,
+                    speed:Math.round((M.speedMax||4000)*0.25), power:50, freq:M.freqDefault,
+                    interval:M.intervalDefault, passes:1, fill:"scan",
+                    pulse:M.source==="mopa"?(M.pulseMin||10):0, proven:false, note:"" };
+      doc.materials.push(mat); doc.laser.materialId = mat.id;
+      doc.laser.trim = 0; doc.laser.manual = false;
+      renderRail(); saveLocal(); break;
+    }
+    case "matcapture": {
+      const p = laserEffective();
+      const nm = (prompt("Name these settings", activeMaterial().name + " (tuned)")||"").trim();
+      if(!nm) return;
+      const mat = Object.assign({}, p, { id:uid("mat_"), name:nm, machineId:doc.machineId,
+        fill:doc.laser.fill, proven:true, note:activeMaterial().note||"" });
+      doc.materials.push(mat);
+      doc.laser.materialId = mat.id; doc.laser.trim = 0; doc.laser.manual = false;
+      renderRail(); saveLocal(); toast("Saved as a new material"); break;
+    }
+    case "matdel": {
+      if(doc.materials.length<2){ toast("Keep at least one material"); return; }
+      const gone = activeMaterial();
+      if(!confirm("Delete "+gone.name+"?")) return;
+      doc.materials = doc.materials.filter(m=>m.id!==gone.id);
+      doc.laser.materialId = (machineMaterials()[0]||doc.materials[0]).id;
+      doc.laser.trim = 0; doc.laser.manual = false;
+      renderRail(); saveLocal(); break;
+    }
+    case "savetrim": {
+      const p = laserEffective(), mat = activeMaterial();
+      const i = doc.materials.findIndex(m=>m.id===mat.id);
+      if(i<0) return;
+      Object.assign(doc.materials[i], { speed:p.speed, power:p.power, freq:p.freq,
+        interval:p.interval, passes:p.passes, pulse:p.pulse, fill:doc.laser.fill, proven:true });
+      doc.laser.trim = 0; doc.laser.manual = false;
+      renderRail(); saveLocal(); toast("Stored on "+mat.name); break;
+    }
     case "lighter": doc.laser.manual=false; doc.laser.trim=clamp(doc.laser.trim-1,-5,5); renderRail(); break;
     case "darker":  doc.laser.manual=false; doc.laser.trim=clamp(doc.laser.trim+1,-5,5); renderRail(); break;
-    case "resettrim": doc.laser.manual=false; doc.laser.trim=0; renderRail(); break;
+    case "resettrim": doc.laser.manual=false; doc.laser.trim=0; syncManualToMaterial(); renderRail(); break;
     case "testgrid": download("hl50e-test-grid.lbrn", testGrid(), "application/xml"); toast("Test grid saved"); break;
     case "exall": {
       const n = batchCount(), keep = doc.fixture.batch;
@@ -2680,13 +3017,18 @@ function updateStatus(){
   $("stSheet").textContent = ui.stageMode==="fixture"
     ? `${sh.faces.length}/${sh.capacity} cells · run ${sh.batch+1} of ${sh.batches} · ${r3(sh.w*MM)}×${r3(sh.h*MM)} mm`
     : `${sh.faces.length} faces · ${r3(sh.w*MM)}×${r3(sh.h*MM)} mm · ${doc.roster.length} locks`;
-  $("docName").textContent = doc.name + " · " + face().name;
+  $("docName").textContent = doc.name + " · " + face().name + " · " + activeMachine().name;
 }
 
 /* ------------------------------------------------------------------- glue --- */
 function syncSelection(){ renderLayers(); renderProps(); showCoord({x:0,y:0}); }
 function buildAll(){ renderFaceTabs(); renderLayers(); renderRail(); drawStage(); updateStatus(); saveLocal(); }
 
+function syncManualToMaterial(){
+  const m = activeMaterial();
+  Object.assign(doc.laser, { speed:m.speed, power:m.power, freq:m.freq,
+                             interval:m.interval, passes:m.passes, pulse:m.pulse||0, fill:m.fill||"scan" });
+}
 function fixtureChanged(){
   doc.fixture.batch = clamp(doc.fixture.batch||0, 0, batchCount()-1);
   drawStage(); renderRail(); updateStatus(); saveLocal();
@@ -2701,12 +3043,13 @@ function setStageMode(m){
 }
 function showPanel(p){
   ui.panel = p; renderRail(); syncNav();
-  if(window.matchMedia("(max-width:1079px)").matches){
+  if(window.matchMedia("(max-width:779px)").matches){
     $("leftrail").classList.remove("open");
     $("rightrail").classList.add("open");
     $("scrim").classList.add("show");
   }
 }
+const NAV_PANEL = { props:"props", batch:"batch", fixture:"fixture", machine:"machine" };
 function syncNav(){
   document.querySelectorAll("#nav button").forEach(b=>{
     const n = b.dataset.nav;
@@ -2718,7 +3061,8 @@ function syncNav(){
 }
 function closeSheets(){
   $("leftrail").classList.remove("open");
-  $("rightrail").classList.remove("open");
+  const t = $("tLayers"); if(t) t.setAttribute("aria-pressed", false);
+  if(window.matchMedia("(max-width:779px)").matches) $("rightrail").classList.remove("open");
   $("scrim").classList.remove("show");
   syncNav();
 }
@@ -2789,6 +3133,11 @@ function boot(){
     closeSheets();
     if(!same) showPanel(n);
   }));
+  $("tLayers").addEventListener("click", ()=>{
+    const L = $("leftrail"), open = L.classList.toggle("open");
+    $("tLayers").setAttribute("aria-pressed", open);
+    $("scrim").classList.toggle("show", open);
+  });
   $("scrim").addEventListener("click", closeSheets);
   document.querySelectorAll(".sheetgrip").forEach(g=>g.addEventListener("click", closeSheets));
   $("btnExport").addEventListener("click", ()=>showPanel("export"));
@@ -3036,27 +3385,37 @@ async function cloudDeletePerson(id){
 /* ---------------------------------------------------------------- presets --- */
 async function cloudSavePreset(){
   if(cloud.state!=="ready") return;
-  const p = laserEffective();
-  const def = MATERIALS[doc.laser.material].name.split(" — ")[0];
-  const name = (prompt("Name this recipe", def) || "").trim();
+  const mat = activeMaterial(), M = activeMachine();
+  const name = (prompt("Share this material as", mat.name) || "").trim();
   if(!name) return;
   const { collection, addDoc, serverTimestamp } = cloud.fb.fs;
   try{
     await addDoc(collection(cloud.db, wsPath()+"/presets"), {
-      name, material:doc.laser.material, speed:p.speed, power:p.power, freq:p.freq,
-      interval:p.interval, passes:p.passes, fill:doc.laser.fill,
+      name, speed:mat.speed, power:mat.power, freq:mat.freq, interval:mat.interval,
+      passes:mat.passes, pulse:mat.pulse||0, fill:mat.fill||"scan",
+      note:mat.note||"", proven:!!mat.proven,
+      machineName:M.name, machineWatts:M.watts, machineSource:M.source, lens:M.lens,
       by: cloud.who || "unknown", savedAt: serverTimestamp()
     });
-    toast("Recipe saved for the shop");
+    toast("Shared with the shop");
   }catch(e){ cloud.err = friendlyCloudError(e); renderCloud(); }
 }
 function cloudApplyPreset(id){
   const p = cloud.presets.find(x=>x.id===id); if(!p) return;
-  Object.assign(doc.laser, { material:p.material||doc.laser.material, manual:true,
-    speed:p.speed, power:p.power, freq:p.freq, interval:p.interval,
-    passes:p.passes, fill:p.fill||"scan" });
-  ui.panel = "laser"; renderRail(); saveLocal();
-  toast("Applied " + p.name);
+  const M = activeMachine();
+  const mismatch = p.machineName && p.machineName !== M.name;
+  const mat = { id:uid("mat_"), name:p.name + (mismatch ? " (from "+p.machineName+")" : ""),
+                machineId: mismatch ? null : doc.machineId,
+                speed:p.speed, power:p.power, freq:p.freq, interval:p.interval,
+                passes:p.passes||1, pulse:p.pulse||0, fill:p.fill||"scan",
+                proven: mismatch ? false : !!p.proven,
+                note: (p.note||"") + (mismatch
+                  ? ((p.note?"\n\n":"") + "Proved on a " + p.machineWatts + " W " + p.machineName
+                     + ". Re-check it on this machine before trusting it.") : "") };
+  doc.materials.push(mat);
+  doc.laser.materialId = mat.id; doc.laser.trim = 0; doc.laser.manual = false;
+  ui.panel = "material"; renderRail(); saveLocal(); updateStatus();
+  toast(mismatch ? "Added — different machine, verify it" : "Added to your materials");
 }
 async function cloudDeletePreset(id){
   const { doc:dref, deleteDoc } = cloud.fb.fs;
@@ -3168,20 +3527,22 @@ function panelCloud(){
     <div class="btnrow" style="margin-top:6px"><button class="btn sm ghost wide" data-act="addperson">Add a person</button></div>
   </div></section>
 
-  <section class="sec"><h3>Proven recipes <span class="tag">${cloud.presets.length}</span></h3><div class="body">
-    ${cloud.presets.length ? `<div class="layers">${cloud.presets.map(p=>`
-      <div class="layer">
-        <span class="nm">${esc(p.name)}
-          <em style="display:block;font-style:normal;font-size:11px;color:var(--text-3)">
-            ${p.speed} mm/s · ${p.power}% · ${p.freq} kHz · ${p.passes}p · ${esc(p.by||"")}</em></span>
-        <button class="mini" data-preset="${p.id}" title="Apply">↧</button>
+  <section class="sec"><h3>Shared materials <span class="tag">${cloud.presets.length}</span></h3><div class="body">
+    ${cloud.presets.length ? `<div class="layers">${cloud.presets.map(p=>{
+      const other = p.machineName && p.machineName !== activeMachine().name;
+      return `<div class="layer">
+        <span class="nm">${p.proven?"✓ ":""}${esc(p.name)}
+          <em style="display:block;font-style:normal;font-size:11px;color:${other?"var(--amber)":"var(--text-3)"}">
+            ${p.speed} mm/s · ${p.power}% · ${p.freq} kHz · ${p.passes||1}p
+            ${p.machineName?" · "+esc(p.machineName):""} · ${esc(p.by||"")}</em></span>
+        <button class="mini" data-preset="${p.id}" title="Add to my materials">↧</button>
         <button class="mini" data-delpreset="${p.id}" title="Delete">✕</button>
-      </div>`).join("")}</div>` : `<div class="empty">No saved recipes yet</div>`}
+      </div>`;}).join("")}</div>` : `<div class="empty">Nothing shared yet</div>`}
     <div class="btnrow" style="margin-top:8px">
-      <button class="btn sm wide" data-act="savepreset">Save the current laser settings</button>
+      <button class="btn sm wide" data-act="savepreset">Share the selected material</button>
     </div>
-    <p class="hint">Once someone dials in a material on this machine, save it here so nobody repeats
-      the test grid.</p>
+    <p class="hint">Recipes are stamped with the machine they were proved on. Pull one in from a different
+      machine and it lands unverified, with a note, rather than pretending to be trustworthy.</p>
   </div></section>`;
 }
 function cfgField(label, key, c){
