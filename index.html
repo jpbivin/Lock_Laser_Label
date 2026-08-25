@@ -579,7 +579,7 @@ input[type=color]{width:100%;height:30px;padding:2px;background:var(--chrome-2);
    ========================================================================== */
 "use strict";
 
-const BUILD = "2026.08.24-b";
+const BUILD = "2026.08.24-c";
 const MM   = 25.4;
 const CAPR = 0.716;              // cap height / em for the sans faces we ship with
 const FONTS = ["Arial","Arial Black","Arial Narrow","Verdana","Tahoma",
@@ -616,7 +616,9 @@ function imageEl(o){
   return Object.assign({
     id:uid("e_"), type:"image", name:"Graphic", anchor:"tc", ox:0, oy:0,
     w:0.6, h:0.3, rot:0, visible:true, locked:false,
-    raw:null, data:null, srcW:0, srcH:0, bytes:0, isSvg:false,
+    raw:null, data:null, bmp:null, srcW:0, srcH:0, bytes:0, isSvg:false,
+    render:"trace",                       // trace = real outlines, raster = image fill
+    paths:null, tracePts:0, traceRes:"", traceTol:0.3, traceMin:14,
     dpi:600, mode:"threshold", thresh:128, invert:false, keepAR:true, fit:"contain"
   },o);
 }
@@ -710,6 +712,7 @@ function defaultDoc(){
     faces:[], roster:[{first:"Dana",last:"Whitfield",dept:"Maintenance"},
                       {first:"",last:"",dept:""}],
     sheet:{ order:"pairs" },
+    lbImage:"embed",
     fixture:{ rows:2, cols:3, pitchX:1.75, pitchY:2.40,
               originX:0.90, originY:0.85, stagger:0,
               order:"row", field:110/MM, batch:0,
@@ -788,6 +791,13 @@ function migrateDoc(d){
   if(!d || typeof d!=="object") return d;
   d.sheet = d.sheet || {};
   if(!d.sheet.order) d.sheet.order = "pairs";
+  if(!d.lbImage) d.lbImage = "embed";
+  (d.faces||[]).forEach(f=>(f.els||[]).forEach(el=>{
+    if(el.type!=="image") return;
+    if(!el.render) el.render = el.paths && el.paths.length ? "trace" : "raster";
+    if(el.traceTol===undefined) el.traceTol = 0.3;
+    if(el.traceMin===undefined) el.traceMin = 14;
+  }));
   if(!d.fixture){
     // old projects stored a column count and edge gaps; convert to true pitch
     const cols = Math.max(1, Math.round(d.sheet.cols || 3));
@@ -1053,7 +1063,13 @@ function elPrims(el, ctx){
   else if(el.type==="image"){
     const ar = el.srcW && el.srcH ? el.srcW/el.srcH : null;
     const f = el.fit==="stretch" || !ar ? box : fitInto(box, ar);
-    if(el.data) out.push({ t:"img", x:f.x, y:f.y, w:f.w, h:f.h, href:el.data, rot, rc });
+    if(el.render==="trace" && el.paths && el.paths.length){
+      const rings = el.paths.map(r => r.map(p =>
+        rotPt([f.x + p[0]*f.w, f.y + p[1]*f.h], rc[0], rc[1], rot)));
+      out.push({ t:"poly", rings, filled:true, traced:true });
+    }
+    else if(el.data) out.push({ t:"img", x:f.x, y:f.y, w:f.w, h:f.h, href:el.data,
+                                bmp:el.bmp, rot, rc });
     else out.push({ t:"ph", x:box.x, y:box.y, w:box.w, h:box.h, label:el.name||"GRAPHIC" });
   }
   return out;
@@ -1264,6 +1280,10 @@ function lbXForm(cx, cy, rot){
   const a = -rot*Math.PI/180, s=Math.sin(a), c=Math.cos(a);
   return `${r3(c)} ${r3(s)} ${r3(-s)} ${r3(c)} ${r3(cx)} ${r3(cy)}`;
 }
+function lbXFormScaled(cx, cy, rot, sx, sy){
+  const a = -(rot||0)*Math.PI/180, si = Math.sin(a), co = Math.cos(a);
+  return `${r3(sx*co)} ${r3(sx*si)} ${r3(-sy*si)} ${r3(sy*co)} ${r3(cx)} ${r3(cy)}`;
+}
 function primLbrn(p, ox, oy, H, pad){
   const k = MM;
   const X = v => (v+ox)*k, Y = v => H - (v+oy)*k;
@@ -1290,6 +1310,13 @@ function primLbrn(p, ox, oy, H, pad){
       + `${pad}  <VertList>${v}</VertList>\n${pad}  <PrimList>${pr}</PrimList>\n${pad}</Shape>\n`;
   }
   if(p.t==="img"){
+    if(p.bmp && p.bmp.data && doc.lbImage !== "guide"){
+      const sx = (p.w*k)/p.bmp.w, sy = (p.h*k)/p.bmp.h;
+      return `${pad}<Shape Type="Bitmap" CutIndex="0" W="${p.bmp.w}" H="${p.bmp.h}" `
+        + `File="" Dither="0" Data="${p.bmp.data}">\n`
+        + `${pad}  <XForm>${lbXFormScaled(X(p.x+p.w/2), Y(p.y+p.h/2), p.rot, sx, sy)}</XForm>\n`
+        + `${pad}</Shape>\n`;
+    }
     return `${pad}<Shape Type="Rect" CutIndex="1" W="${r3(p.w*k)}" H="${r3(p.h*k)}" Cr="0">\n`
       + `${pad}  <XForm>${lbXForm(X(p.x+p.w/2), Y(p.y+p.h/2), p.rot)}</XForm>\n${pad}</Shape>\n`;
   }
@@ -1956,6 +1983,244 @@ function showCoord(w){
 window.addEventListener("resize", ()=>{ drawStage(); });
 
 /* ============================================================================
+   MARKBENCH — contour tracer
+
+   Turns a 1-bit bitmap into closed vector outlines so a logo marks as real
+   geometry instead of as an image fill.
+
+   Method: crack following. Every ink pixel contributes the lattice edges where
+   its neighbour is empty, directed so ink always sits on the same side. Those
+   directed edges are then stitched into closed loops, so holes (the middle of
+   an O, the gap in an A) fall out on their own with the opposite winding and
+   fill correctly under even-odd.
+
+   Output rings are normalised to 0..1 across the traced frame, which makes them
+   independent of trace resolution and safe to scale.
+   ========================================================================== */
+
+const TRACE_MAX_PX = 1_800_000;     // ~1340 x 1340; plenty for a lock-body logo
+const TRACE_MAX_SIDE = 1600;
+/* Small sources get scaled UP before tracing. Interpolation turns a hard pixel
+   staircase into a graded edge, and thresholding that graded edge lands much
+   closer to the true curve than the original pixel corners would. */
+const TRACE_MIN_SIDE = 900;
+
+/* --- luminance + threshold ------------------------------------------------ */
+function inkMask(data, W, H, thresh, invert){
+  const ink = new Uint8Array(W*H);
+  for(let i=0, p=0; i<ink.length; i++, p+=4){
+    const a = data[p+3];
+    let g = 0.299*data[p] + 0.587*data[p+1] + 0.114*data[p+2];
+    if(invert) g = 255-g;
+    if(a < 16) g = 255;             // transparent counts as background
+    ink[i] = g < thresh ? 1 : 0;
+  }
+  return ink;
+}
+
+/* --- crack following ------------------------------------------------------ */
+function traceMask(ink, W, H){
+  const at = (x,y) => (x<0||y<0||x>=W||y>=H) ? 0 : ink[y*W+x];
+  const stride = W+1;
+  const key = (x,y) => y*stride + x;
+
+  /* every lattice point keeps the edges that leave it */
+  const out = new Map();
+  const add = (x0,y0,x1,y1) => {
+    const k = key(x0,y0);
+    let a = out.get(k);
+    if(!a){ a = []; out.set(k, a); }
+    a.push([x1, y1, 0]);            // [endX, endY, used]
+  };
+  for(let y=0; y<H; y++){
+    const row = y*W;
+    for(let x=0; x<W; x++){
+      if(!ink[row+x]) continue;
+      if(!at(x,   y-1)) add(x,   y,   x+1, y  );   // top,    heading +x
+      if(!at(x+1, y  )) add(x+1, y,   x+1, y+1);   // right,  heading +y
+      if(!at(x,   y+1)) add(x+1, y+1, x,  y+1);    // bottom, heading -x
+      if(!at(x-1, y  )) add(x,   y+1, x,  y  );    // left,   heading -y
+    }
+  }
+
+  const loops = [];
+  const guardMax = 4*W*H + 16;
+
+  for(const [startKey, edges] of out){
+    for(const seed of edges){
+      if(seed[2]) continue;
+      const sx = startKey % stride, sy = (startKey - sx)/stride;
+      seed[2] = 1;
+
+      const pts = [[sx, sy]];
+      let px = sx, py = sy;
+      let nx = seed[0], ny = seed[1];
+      let dx = nx-px, dy = ny-py;
+      let guard = 0;
+
+      while((nx !== sx || ny !== sy) && guard++ < guardMax){
+        pts.push([nx, ny]);
+        const list = out.get(key(nx, ny));
+        if(!list){ break; }
+        /* At a four-way lattice point two edges leave it. Turning the same way
+           every time keeps the walk on one region instead of hopping across
+           the diagonal pinch. Order: turn, then straight, then the other turn. */
+        const want = [[-dy, dx], [dx, dy], [dy, -dx], [-dx, -dy]];
+        let next = null;
+        for(const [wx, wy] of want){
+          next = list.find(c => !c[2] && (c[0]-nx)===wx && (c[1]-ny)===wy);
+          if(next) break;
+        }
+        if(!next) next = list.find(c => !c[2]);
+        if(!next) break;
+        next[2] = 1;
+        px = nx; py = ny;
+        nx = next[0]; ny = next[1];
+        dx = nx-px; dy = ny-py;
+      }
+      if(pts.length >= 4) loops.push(pts);
+    }
+  }
+  return loops;
+}
+
+/* --- geometry helpers ----------------------------------------------------- */
+function ringArea(r){
+  let a = 0;
+  for(let i=0, n=r.length; i<n; i++){
+    const p = r[i], q = r[(i+1)%n];
+    a += p[0]*q[1] - q[0]*p[1];
+  }
+  return a/2;
+}
+function dropCollinear(r){
+  const out = [];
+  const n = r.length;
+  for(let i=0;i<n;i++){
+    const a = r[(i-1+n)%n], b = r[i], c = r[(i+1)%n];
+    const cross = (b[0]-a[0])*(c[1]-a[1]) - (b[1]-a[1])*(c[0]-a[0]);
+    if(cross !== 0) out.push(b);
+  }
+  return out.length >= 3 ? out : r;
+}
+/* Douglas–Peucker on an open polyline */
+function dpOpen(pts, tol){
+  if(pts.length < 3) return pts.slice();
+  const keep = new Uint8Array(pts.length);
+  keep[0] = keep[pts.length-1] = 1;
+  const stack = [[0, pts.length-1]];
+  const t2 = tol*tol;
+  while(stack.length){
+    const [i, j] = stack.pop();
+    if(j <= i+1) continue;
+    const ax = pts[i][0], ay = pts[i][1];
+    const bx = pts[j][0], by = pts[j][1];
+    const ex = bx-ax, ey = by-ay;
+    const len2 = ex*ex + ey*ey;
+    let far = -1, fd = -1;
+    for(let k=i+1; k<j; k++){
+      const px = pts[k][0]-ax, py = pts[k][1]-ay;
+      let d2;
+      if(len2 === 0){ d2 = px*px + py*py; }
+      else {
+        let t = (px*ex + py*ey)/len2;
+        t = t<0 ? 0 : t>1 ? 1 : t;
+        const qx = px - t*ex, qy = py - t*ey;
+        d2 = qx*qx + qy*qy;
+      }
+      if(d2 > fd){ fd = d2; far = k; }
+    }
+    if(fd > t2 && far > 0){
+      keep[far] = 1;
+      stack.push([i, far], [far, j]);
+    }
+  }
+  const out = [];
+  for(let i=0;i<pts.length;i++) if(keep[i]) out.push(pts[i]);
+  return out;
+}
+/* DP on a closed ring: anchor at the two most distant points so the start
+   vertex doesn't become an artificial corner */
+function dpClosed(ring, tol){
+  const n = ring.length;
+  if(n < 5 || tol <= 0) return ring;
+  let a = 0, best = -1;
+  for(let i=1;i<n;i++){
+    const dx = ring[i][0]-ring[0][0], dy = ring[i][1]-ring[0][1];
+    const d = dx*dx + dy*dy;
+    if(d > best){ best = d; a = i; }
+  }
+  const first = ring.slice(0, a+1);
+  const second = ring.slice(a).concat([ring[0]]);
+  const s1 = dpOpen(first, tol);
+  const s2 = dpOpen(second, tol);
+  const merged = s1.concat(s2.slice(1, -1));
+  return merged.length >= 3 ? merged : ring;
+}
+
+/* --- the public entry point ----------------------------------------------- */
+/* returns { rings, points, W, H } — rings normalised to 0..1, y down */
+function traceImageData(imgData, W, H, opt){
+  const ink = inkMask(imgData, W, H, opt.thresh, opt.invert);
+  let loops = traceMask(ink, W, H);
+
+  const minArea = Math.max(0, opt.minArea||0);
+  const tol = Math.max(0, opt.tol||0);
+  const rings = [];
+  let points = 0;
+
+  for(let r of loops){
+    if(Math.abs(ringArea(r)) < minArea) continue;   // specks and stray pixels
+    r = dropCollinear(r);
+    if(tol > 0) r = dpClosed(r, tol);
+    if(r.length < 3) continue;
+    if(Math.abs(ringArea(r)) < minArea) continue;
+    points += r.length;
+    rings.push(r.map(p => [p[0]/W, p[1]/H]));
+  }
+  /* biggest shapes first keeps the fill order sane in LightBurn */
+  rings.sort((a,b)=>Math.abs(ringArea(b))-Math.abs(ringArea(a)));
+  return { rings, points, W, H };
+}
+
+/* --- run it against an element ------------------------------------------- */
+async function traceElement(el){
+  if(!el.raw) return;
+  const im = await loadImg(el.raw);
+  let W = im.naturalWidth || 300, H = im.naturalHeight || 200;
+  const side = Math.max(W, H);
+  let k = 1;
+  if(side < TRACE_MIN_SIDE) k = TRACE_MIN_SIDE/side;
+  if(side > TRACE_MAX_SIDE) k = TRACE_MAX_SIDE/side;
+  if(W*k * H*k > TRACE_MAX_PX) k = Math.sqrt(TRACE_MAX_PX/(W*H));
+  W = Math.max(8, Math.round(W*k));
+  H = Math.max(8, Math.round(H*k));
+
+  const cv = document.createElement("canvas");
+  cv.width = W; cv.height = H;
+  const cx = cv.getContext("2d", {willReadFrequently:true});
+  cx.imageSmoothingQuality = "high";
+  cx.drawImage(im, 0, 0, W, H);
+  const d = cx.getImageData(0, 0, W, H);
+
+  /* the speck filter is authored as a resolution-independent number */
+  const minAreaPx = (el.traceMin||0) * (W*H) / 100000;
+
+  const res = traceImageData(d.data, W, H, {
+    thresh: el.thresh, invert: el.invert,
+    tol: el.traceTol, minArea: minAreaPx
+  });
+
+  el.paths = res.rings.map(r => r.map(p => [Math.round(p[0]*1e4)/1e4,
+                                            Math.round(p[1]*1e4)/1e4]));
+  el.tracePts = res.points;
+  el.traceRes = W + "×" + H;
+  el.data = null;                              // the raster isn't needed now
+  el.bmp = null;
+  el.bytes = new Blob([JSON.stringify(el.paths)]).size;
+}
+
+/* ============================================================================
    MARKBENCH — panels, image pipeline, laser recipes, export, boot
    ========================================================================== */
 
@@ -1989,13 +2254,29 @@ function readFile(file){
   });
 }
 async function ingestImage(el, file){
-  const raw = await readFile(file);
-  el.raw = raw;
-  el.isSvg = /^data:image\/svg/.test(raw);
-  try{
-    const im = await loadImg(raw);
-    el.srcW = im.naturalWidth||300; el.srcH = im.naturalHeight||200;
-  }catch(e){ el.srcW = 300; el.srcH = 200; }
+  const uploaded = await readFile(file);
+  el.isSvg = /^data:image\/svg/.test(uploaded);
+  let im = null;
+  try{ im = await loadImg(uploaded); }catch(e){}
+  el.srcW = (im && im.naturalWidth) || 300;
+  el.srcH = (im && im.naturalHeight) || 200;
+
+  /* Store a working copy at trace resolution instead of the original. A 4 MB
+     phone photo has no business riding along in the project file. */
+  el.raw = uploaded;
+  if(im && !el.isSvg){
+    const side = Math.max(el.srcW, el.srcH);
+    if(side > TRACE_MAX_SIDE){
+      const k = TRACE_MAX_SIDE/side;
+      const w = Math.max(8, Math.round(el.srcW*k)), h = Math.max(8, Math.round(el.srcH*k));
+      const cv = document.createElement("canvas");
+      cv.width = w; cv.height = h;
+      const cx = cv.getContext("2d");
+      cx.imageSmoothingQuality = "high";
+      cx.drawImage(im, 0, 0, w, h);
+      el.raw = cv.toDataURL("image/png");
+    }
+  }
   if(el.keepAR && el.srcW && el.srcH){
     const b = boxOf(el);
     setBox(el, {x:b.x, y:b.y, w:b.w, h:b.w*el.srcH/el.srcW});
@@ -2005,8 +2286,11 @@ async function ingestImage(el, file){
 }
 async function processImage(el){
   if(!el.raw) return;
+  if(el.render === "trace"){ await traceElement(el); return; }
+  el.paths = null; el.tracePts = 0;
   if(el.isSvg && el.mode==="original"){
-    el.data = el.raw; el.bytes = Math.round(el.raw.length*0.75); return;
+    el.data = el.raw; el.bmp = null;
+    el.bytes = Math.round(el.raw.length*0.75); return;
   }
   const im = await loadImg(el.raw);
   const targetW = Math.max(24, Math.min(4000, Math.round(el.w * el.dpi)));
@@ -2035,6 +2319,14 @@ async function processImage(el){
   }
   el.data = cv.toDataURL("image/png");
   el.bytes = Math.round(el.data.length*0.75);
+
+  /* LightBurn wants an opaque raster — flatten the transparency onto white */
+  const fl = document.createElement("canvas");
+  fl.width = W; fl.height = H;
+  const fx = fl.getContext("2d");
+  fx.fillStyle = "#ffffff"; fx.fillRect(0,0,W,H);
+  fx.drawImage(cv, 0, 0);
+  el.bmp = { w:W, h:H, data: fl.toDataURL("image/png").split(",")[1] };
 }
 
 /* ------------------------------------------------------------ small util --- */
@@ -2196,24 +2488,57 @@ function panelProps(){
   }
   else if(el.type==="image"){
     const kb = el.bytes ? (el.bytes/1024).toFixed(el.bytes>1024*100?0:1)+" KB" : "—";
+    const traced = el.render==="trace";
+    const heavy = traced && el.tracePts > 20000;
     s += `<section class="sec"><h3>Graphic <span class="tag">${kb}</span></h3><div class="body">
-      ${el.data?`<img class="thumb" src="${el.data}" alt="">`:`<div class="empty">No image loaded</div>`}
+      ${el.raw?`<img class="thumb" src="${el.raw}" alt="">`:`<div class="empty">No image loaded</div>`}
       <div class="btnrow split" style="margin-top:8px">
-        <button class="btn sm" data-act="pickimg">${el.data?"Replace":"Upload"}</button>
+        <button class="btn sm" data-act="pickimg">${el.raw?"Replace":"Upload"}</button>
         <button class="btn sm ghost" data-act="clearimg">Clear</button>
       </div>
       <div class="divider"></div>
-      <div class="row">${fSel("Prepare for laser","el.mode",[["threshold","1-bit — black / clear"],
-        ["gray","Greyscale"],["original","Leave as uploaded"]])}</div>
-      ${el.mode==="threshold"?`<div class="row"><label class="fld"><span>Threshold ${el.thresh}</span>
-        <input type="range" min="10" max="245" value="${el.thresh}" data-bind="el.thresh" data-kind="num" data-reproc="1"></label></div>`:""}
-      <div class="row c2">${fSel("Resolution",  "el.dpi",[[300,"300 dpi"],[600,"600 dpi"],[1000,"1000 dpi"]],"num")}
-        ${fSel("Fit","el.fit",[["contain","Keep aspect"],["stretch","Stretch to box"]])}</div>
-      <div class="row c2">${fChk("Invert","el.invert")}${fChk("Lock aspect on resize","el.keepAR")}</div>
-      <p class="hint">The image is resampled to the element's printed size at the chosen resolution and
-        re-encoded, so a 4 MB phone photo becomes a few KB of mark data. 1-bit is what a fibre laser
-        actually marks — clear pixels are skipped entirely.</p>
+      <div class="row">${fSeg("Output","el.render",[["trace","Vector outlines"],["raster","Raster image"]])}</div>
+      ${traced
+        ? `<p class="hint" style="margin-top:0">Traced to closed outlines, so it marks as real geometry —
+             faster, crisper edges, and it travels in both the .svg and the .lbrn.</p>`
+        : `<p class="hint" style="margin-top:0">Kept as an image. Right for photographs and shading;
+             for a flat logo, outlines mark better.</p>`}
     </div></section>`;
+
+    if(traced){
+      s += `<section class="sec"><h3>Trace
+        <span class="tag">${el.paths?el.paths.length:0} paths · ${(el.tracePts||0).toLocaleString()} pts</span></h3><div class="body">
+        <div class="row"><label class="fld"><span>Threshold ${el.thresh}</span>
+          <input type="range" min="10" max="245" value="${el.thresh}" data-bind="el.thresh" data-kind="num" data-reproc="1"></label></div>
+        <div class="row"><label class="fld"><span>Simplify ${el.traceTol.toFixed(2)} px — higher is lighter, lower is truer</span>
+          <input type="range" min="0" max="2" step="0.05" value="${el.traceTol}" data-bind="el.traceTol" data-kind="num" data-reproc="1" data-relabel="Simplify"></label></div>
+        <div class="row"><label class="fld"><span>Drop specks under ${el.traceMin} px²</span>
+          <input type="range" min="0" max="200" step="2" value="${el.traceMin}" data-bind="el.traceMin" data-kind="num" data-reproc="1" data-relabel="Drop specks under"></label></div>
+        <div class="row c2">${fChk("Invert","el.invert")}${fChk("Lock aspect on resize","el.keepAR")}</div>
+        <div class="row">${fSel("Fit","el.fit",[["contain","Keep aspect"],["stretch","Stretch to box"]])}</div>
+        <div class="btnrow"><button class="btn sm wide" data-act="retrace">Re-trace</button></div>
+        ${el.traceRes?`<p class="hint">Traced at ${esc(el.traceRes)} px.</p>`:""}
+        ${heavy?`<div class="callout">${(el.tracePts||0).toLocaleString()} points is a lot for one logo.
+          Raise Simplify — the mark won't look different at this size and the file gets much lighter.</div>`:""}
+        ${el.paths && !el.paths.length?`<div class="callout bad">Nothing traced. Move the threshold, or
+          invert if your logo is light artwork on a dark background.</div>`:""}
+      </div></section>`;
+    } else {
+      s += `<section class="sec"><h3>Raster</h3><div class="body">
+        <div class="row">${fSel("Prepare for laser","el.mode",[["threshold","1-bit — black / clear"],
+          ["gray","Greyscale"],["original","Leave as uploaded"]])}</div>
+        ${el.mode==="threshold"?`<div class="row"><label class="fld"><span>Threshold ${el.thresh}</span>
+          <input type="range" min="10" max="245" value="${el.thresh}" data-bind="el.thresh" data-kind="num" data-reproc="1"></label></div>`:""}
+        <div class="row c2">${fSel("Resolution","el.dpi",[[300,"300 dpi"],[600,"600 dpi"],[1000,"1000 dpi"]],"num")}
+          ${fSel("Fit","el.fit",[["contain","Keep aspect"],["stretch","Stretch to box"]])}</div>
+        <div class="row c2">${fChk("Invert","el.invert")}${fChk("Lock aspect on resize","el.keepAR")}</div>
+        <div class="divider"></div>
+        <div class="row">${fSeg("In LightBurn","doc.lbImage",[["embed","Embed the image"],["guide","Guide box only"]])}</div>
+        <p class="hint">Embedded rasters go into the .lbrn as a Bitmap shape. Open the first one and check
+          it landed at the right size and place before you trust a batch — if it doesn't, switch to
+          <b>Guide box only</b> and import the .svg instead.</p>
+      </div></section>`;
+    }
   }
   else if(el.type==="icon"){
     s += `<section class="sec"><h3>Symbol</h3><div class="body">
@@ -2522,7 +2847,8 @@ function panelMaterial(){
 /* ---- export ---- */
 function panelExport(){
   const sh = sheetFaces();
-  const hasImg = doc.faces.some(f=>f.els.some(e=>e.type==="image" && e.data));
+  const rasterImg = doc.faces.some(f=>f.els.some(e=>e.type==="image" && e.render!=="trace" && e.data));
+  const tracedImg = doc.faces.some(f=>f.els.some(e=>e.type==="image" && e.render==="trace" && e.paths && e.paths.length));
   const issues = fitIssues();
   return `
   <section class="sec"><h3>Export</h3><div class="body">
@@ -2542,9 +2868,11 @@ function panelExport(){
     </div>
     ${sh.batches>1?`<div class="btnrow" style="margin-top:6px">
       <button class="btn sm wide" data-act="exall">All runs — ${sh.batches} .lbrn files</button></div>`:""}
-    ${hasImg?`<div class="callout">This design contains a raster graphic. The SVG carries the image;
-      the .lbrn carries a guide box for it on a no-output layer. For logos, export SVG and import that —
-      or import the logo separately in LightBurn and drop it in the box.</div>`:""}
+    ${rasterImg?`<div class="callout">This design contains a raster graphic. It goes into the .lbrn as
+      ${doc.lbImage==="guide"?"a guide box only — import the .svg for the artwork"
+        :"an embedded Bitmap shape; check the first one on screen before running a batch"}.</div>`:""}
+    ${tracedImg?`<div class="callout">Traced graphics export as real outlines in both files — nothing to
+      import separately.</div>`:""}
     <div class="divider"></div>
     <div class="btnrow split">
       <button class="btn sm" data-act="savejson">Save project</button>
@@ -2624,8 +2952,14 @@ function bindPanel(root){
       setByPath(path, v);
       if(inp.dataset.reproc){
         const lab = inp.parentElement && inp.parentElement.querySelector("span");
-        if(lab) lab.textContent = "Threshold " + Math.round(v);
-        const el=firstSel(); if(el){ await processImage(el); }
+        if(lab){
+          const stem = inp.dataset.relabel || "Threshold";
+          lab.textContent = stem==="Simplify"
+            ? `Simplify ${(+v).toFixed(2)} px — higher is lighter, lower is truer`
+            : stem==="Drop specks under" ? `Drop specks under ${Math.round(v)} px²`
+            : `Threshold ${Math.round(v)}`;
+        }
+        const el=firstSel(); if(el){ await processImage(el); drawStage(); }
       }
       await afterEdit(path);
     });
@@ -2682,8 +3016,9 @@ async function afterEdit(path){
   const el = firstSel();
   if(el && path.startsWith("el.")){
     if(path==="el.w"||path==="el.h") setBox(el, boxOf(el));
-    if(el.type==="image" && (path==="el.dpi"||path==="el.mode"||path==="el.invert"||path==="el.w"||path==="el.h")){
+    if(el.type==="image" && /^el\.(dpi|mode|invert|render|traceTol|traceMin|thresh|w|h)$/.test(path)){
       await processImage(el);
+      if(path==="el.render") renderRail(true);
     }
   }
   drawStage(); updateStatus(); renderLayers(); saveLocal();
@@ -2716,10 +3051,19 @@ async function action(a){
       if(!el) return;
       const f = $("fileImg");
       f.value = "";
-      f.onchange = async ()=>{ if(f.files[0]){ await ingestImage(el, f.files[0]); renderRail(); drawStage(); renderLayers(); toast("Graphic loaded and compressed"); } };
+      f.onchange = async ()=>{ if(f.files[0]){
+        await ingestImage(el, f.files[0]);
+        renderRail(true); drawStage(); renderLayers(); saveLocal();
+        toast(el.render==="trace"
+          ? "Traced to " + (el.paths?el.paths.length:0) + " outlines"
+          : "Graphic loaded and compressed");
+      } };
       f.click(); break;
     }
-    case "clearimg": if(el){ el.raw=el.data=null; el.bytes=0; renderRail(); drawStage(); } break;
+    case "clearimg": if(el){ el.raw=el.data=el.bmp=el.paths=null; el.bytes=0; el.tracePts=0;
+      renderRail(true); drawStage(); } break;
+    case "retrace": if(el){ await processImage(el); renderRail(true); drawStage(); saveLocal();
+      toast((el.paths?el.paths.length:0)+" outlines"); } break;
     case "fitcontent": {
       if(!el) return;
       const b = boxOf(el);
@@ -3220,8 +3564,8 @@ function boot(){
   ro.observe($("stagewrap"));
   requestAnimationFrame(()=>{ fitView(); syncNav(); });
 }
-document.addEventListener("DOMContentLoaded", boot);
-if(document.readyState!=="loading") boot();
+if(document.readyState==="loading") document.addEventListener("DOMContentLoaded", boot);
+else setTimeout(boot, 0);
 
 /* ============================================================================
    MARKBENCH — cloud layer (Firebase / Firestore)

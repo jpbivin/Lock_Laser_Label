@@ -195,8 +195,23 @@ Each element anchors to one of nine points on the safe area, so it holds its
 position when the label changes size.
 
 **Element** — per-element properties. Text auto-shrinks or wraps to fit.
-Graphics resample to their printed size at 300/600/1000 dpi and convert to
-1-bit black-and-clear, which is what the fiber laser actually marks.
+
+Graphics have two output modes:
+
+- **Vector outlines** (the default). The image is thresholded to 1-bit and
+  contour-traced into closed paths, holes and counters included. It exports as
+  real geometry in *both* the `.svg` and the `.lbrn`, marks faster than an
+  image fill, and has crisp edges at any size. *Simplify* trades point count
+  against fidelity; *Drop specks* clears stray pixels. Right for logos, badges,
+  symbols, and anything flat.
+- **Raster image**. Resamples to the printed size at 300/600/1000 dpi and
+  converts to 1-bit black-and-clear or greyscale. Right for photographs and
+  shading. Embeds into the `.lbrn` as a Bitmap shape, or you can switch it to
+  a guide box and import the `.svg` instead.
+
+Small sources are scaled up before tracing — interpolating the edge first puts
+the traced contour much closer to the true curve than the original pixel
+corners would.
 
 **Batch** — the roster. Text tokens `{first}` `{last}` `{dept}` `{n}` `{date}`
 fill per lock, so one design covers the whole batch.
@@ -239,9 +254,10 @@ a new material instead. A 4×4 parameter test grid is one press away.
 **Export** — `.lbrn` with your material layer already configured and each face
 grouped, or `.svg`. Both are written in millimetres at true size.
 
-Raster logos travel in the SVG, not in the `.lbrn` — the LightBurn file
-reserves a guide box for them on a no-output layer instead. Import the SVG, or
-place the logo in LightBurn separately.
+Traced graphics need nothing special — they are ordinary paths in both files.
+Raster graphics embed into the `.lbrn` as a Bitmap shape; open the first one
+and confirm it landed at the right size and place before running a batch, and
+if it hasn't, switch that element to *Guide box only* and import the `.svg`.
 
 Check the first face on screen in LightBurn before running a batch: text
 anchoring shifts slightly between LightBurn versions.
