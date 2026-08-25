@@ -254,6 +254,18 @@ a new material instead. A 4×4 parameter test grid is one press away.
 **Export** — `.lbrn` with your material layer already configured and each face
 grouped, or `.svg`. Both are written in millimetres at true size.
 
+Text is converted to **outlines** by default. LightBurn's text shape anchors
+vertically by the top of the character box rather than the baseline, and its
+file format doesn't document that, so handing over geometry removes the guess
+entirely — and removes the need for the font to be installed on the laser PC.
+What the editor shows is what lands on the part. Switch to *Live text* in the
+Export tab if you'd rather keep it editable in LightBurn; a vertical nudge is
+provided there for fine tuning.
+
+Knocked-out text over a filled bar is folded into the bar as holes in a single
+even-odd shape, so it cuts out correctly regardless of the layer's fill
+grouping setting.
+
 Traced graphics need nothing special — they are ordinary paths in both files.
 Raster graphics embed into the `.lbrn` as a Bitmap shape; open the first one
 and confirm it landed at the right size and place before running a batch, and

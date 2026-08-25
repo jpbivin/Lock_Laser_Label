@@ -579,7 +579,7 @@ input[type=color]{width:100%;height:30px;padding:2px;background:var(--chrome-2);
    ========================================================================== */
 "use strict";
 
-const BUILD = "2026.08.24-c";
+const BUILD = "2026.08.25-a";
 const MM   = 25.4;
 const CAPR = 0.716;              // cap height / em for the sans faces we ship with
 const FONTS = ["Arial","Arial Black","Arial Narrow","Verdana","Tahoma",
@@ -713,6 +713,8 @@ function defaultDoc(){
                       {first:"",last:"",dept:""}],
     sheet:{ order:"pairs" },
     lbImage:"embed",
+    textOut:"outline",              // outline = traced geometry, live = LightBurn text
+    lbTextNudge:0,
     fixture:{ rows:2, cols:3, pitchX:1.75, pitchY:2.40,
               originX:0.90, originY:0.85, stagger:0,
               order:"row", field:110/MM, batch:0,
@@ -792,6 +794,8 @@ function migrateDoc(d){
   d.sheet = d.sheet || {};
   if(!d.sheet.order) d.sheet.order = "pairs";
   if(!d.lbImage) d.lbImage = "embed";
+  if(!d.textOut) d.textOut = "outline";
+  if(d.lbTextNudge === undefined) d.lbTextNudge = 0;
   (d.faces||[]).forEach(f=>(f.els||[]).forEach(el=>{
     if(el.type!=="image") return;
     if(!el.render) el.render = el.paths && el.paths.length ? "trace" : "raster";
@@ -1248,8 +1252,9 @@ function exportSVG(){
     + `<title>${esc(doc.name)} — ${sh.faces.length} faces`
     + (sh.batches>1 ? ` — batch ${sh.batch+1} of ${sh.batches}` : "") + `</title>\n`;
   sh.faces.forEach((f,i)=>{
+    const prims = doc.textOut==="outline" ? outlineText(f.prims) : f.prims;
     s += `<g id="${esc("face_"+(i+1)+"_"+f.name.replace(/[^A-Za-z0-9]+/g,"_"))}">\n`;
-    f.prims.forEach(p=>{ const t = primSvg(p, f.ox, f.oy, k, opt); if(t) s += "  "+t+"\n"; });
+    prims.forEach(p=>{ const t = primSvg(p, f.ox, f.oy, k, opt); if(t) s += "  "+t+"\n"; });
     s += `</g>\n`;
   });
   return s + `</svg>\n`;
@@ -1289,10 +1294,13 @@ function primLbrn(p, ox, oy, H, pad){
   const X = v => (v+ox)*k, Y = v => H - (v+oy)*k;
   if(p.t==="ph") return "";
   if(p.t==="text"){
+    /* Measured against LightBurn 1.7.08: the XForm point is the TOP of the
+       character box, not the baseline. Send the cap top, plus a user nudge. */
+    const yTop = Y(p.y - p.cap) + (doc.lbTextNudge||0);
     return `${pad}<Shape Type="Text" CutIndex="0" Font="${esc(p.font)}" Str="${esc(p.str)}" `
       + `H="${r3(p.cap*k)}" LS="${r3(p.fs*k*(p.track||0)/1000)}" LnS="0" Ah="0" Av="0" `
       + `Bold="${p.bold?1:0}" Italic="${p.italic?1:0}" Weld="0" HasBackupPath="0">\n`
-      + `${pad}  <XForm>${lbXForm(X(p.x), Y(p.y), p.rot)}</XForm>\n${pad}</Shape>\n`;
+      + `${pad}  <XForm>${lbXForm(X(p.x), yTop, p.rot)}</XForm>\n${pad}</Shape>\n`;
   }
   if(p.t==="rect"){
     return `${pad}<Shape Type="Rect" CutIndex="0" W="${r3(p.w*k)}" H="${r3(p.h*k)}" `
@@ -1331,7 +1339,8 @@ function exportLBRN(){
   s += lbCut(1, "Guide — no output", {power:10,speed:1000,freq:30,passes:1,interval:0.05}, true, false);
   sh.faces.forEach(f=>{
     s += `  <Shape Type="Group">\n    <XForm>1 0 0 1 0 0</XForm>\n    <Children>\n`;
-    f.prims.forEach(q=> s += primLbrn(q, f.ox, f.oy, H, "      "));
+    const prims = doc.textOut==="outline" ? outlineText(f.prims) : f.prims;
+    prims.forEach(q=> s += primLbrn(q, f.ox, f.oy, H, "      "));
     s += `    </Children>\n  </Shape>\n`;
   });
   return s + `</LightBurnProject>\n`;
@@ -2220,6 +2229,150 @@ async function traceElement(el){
   el.bytes = new Blob([JSON.stringify(el.paths)]).size;
 }
 
+
+/* ============================================================================
+   TEXT → OUTLINES
+
+   LightBurn's text shape anchors vertically in a way its file format doesn't
+   document, and the shop PC may not even have the font. Both problems vanish
+   if we hand over geometry instead of text: render the run ourselves at high
+   resolution, trace it with the same contour tracer used for logos, and emit
+   closed paths positioned from the pen origin and baseline we already computed.
+
+   What you see in the editor is then what lands on the part.
+   ========================================================================== */
+
+const TEXT_PPI = 700;            // raster resolution for tracing glyphs
+const TEXT_TOL = 0.55;           // px at that resolution ≈ 0.02 mm deviation
+const _textRings = new Map();
+
+function textRingsKey(str, o){
+  return [str, o.font, o.bold?1:0, o.italic?1:0,
+          Math.round(o.cap*1e4), Math.round(o.track||0)].join("\u0001");
+}
+
+/* returns rings in INCHES, offset from the pen origin (x) and baseline (y) */
+function textRings(str, o){
+  if(!str) return [];
+  const key = textRingsKey(str, o);
+  const hit = _textRings.get(key);
+  if(hit) return hit;
+
+  const fsIn = o.cap / CAPR;
+  let scale = TEXT_PPI;
+  if(fsIn*scale < 40) scale = 40/fsIn;             // keep small type legible to the tracer
+  if(fsIn*scale > 400) scale = 400/fsIn;           // and keep big type cheap
+  const fsPx = fsIn*scale;
+
+  const cv = document.createElement("canvas");
+  const cx = cv.getContext("2d", {willReadFrequently:true});
+  const font = (o.italic?"italic ":"") + (o.bold?"700 ":"400 ") + fsPx + "px " +
+               "'" + o.font + "', Arial, sans-serif";
+  cx.font = font;
+
+  const space = fsPx * (o.track||0)/1000;
+  const m = cx.measureText(str);
+  const advance = m.width + space*Math.max(0, str.length-1);
+  const asc  = (m.actualBoundingBoxAscent  != null && isFinite(m.actualBoundingBoxAscent))
+             ? m.actualBoundingBoxAscent  : fsPx*0.85;
+  const desc = (m.actualBoundingBoxDescent != null && isFinite(m.actualBoundingBoxDescent))
+             ? m.actualBoundingBoxDescent : fsPx*0.30;
+
+  const padPx = Math.ceil(fsPx*0.25) + 4;
+  const W = Math.max(8, Math.ceil(advance) + padPx*2);
+  const H = Math.max(8, Math.ceil(asc + desc) + padPx*2);
+  if(W*H > TRACE_MAX_PX) return [];                // absurdly long run; leave it as text
+
+  cv.width = W; cv.height = H;
+  const g = cv.getContext("2d", {willReadFrequently:true});
+  g.fillStyle = "#ffffff"; g.fillRect(0,0,W,H);
+  g.font = font;
+  g.textAlign = "left";
+  g.textBaseline = "alphabetic";
+  g.fillStyle = "#000000";
+
+  const ox = padPx, oy = padPx + asc;
+  if(space === 0){
+    g.fillText(str, ox, oy);
+  } else {
+    /* place each glyph at the advance of the prefix, so kerning survives and
+       the total width matches what the layout engine measured */
+    for(let i=0;i<str.length;i++){
+      const at = g.measureText(str.slice(0,i)).width + i*space;
+      g.fillText(str[i], ox + at, oy);
+    }
+  }
+
+  const res = traceImageData(g.getImageData(0,0,W,H).data, W, H,
+                             {thresh:128, invert:false, tol:TEXT_TOL, minArea:1.5});
+
+  /* normalised -> pixels -> inches relative to (pen origin, baseline) */
+  const rings = res.rings.map(r => r.map(q => [
+    (q[0]*W - ox)/scale,
+    (q[1]*H - oy)/scale
+  ]));
+
+  if(_textRings.size > 500) _textRings.clear();
+  _textRings.set(key, rings);
+  return rings;
+}
+
+/* swap text primitives for traced geometry, baking in any rotation */
+function outlineText(prims){
+  const out = [];
+  for(const p of prims){
+    if(p.t !== "text"){ out.push(p); continue; }
+    let rings;
+    try{
+      rings = textRings(p.str, {font:p.font, bold:p.bold, italic:p.italic,
+                                cap:p.cap, track:p.track});
+    }catch(e){ rings = null; }
+    if(!rings || !rings.length){ out.push(p); continue; }   // fall back to live text
+    out.push({ t:"poly", filled:true, invert:p.invert, fromText:true,
+               rings: rings.map(r => r.map(q =>
+                 rotPt([p.x + q[0], p.y + q[1]], p.rc[0], p.rc[1], p.rot))) });
+  }
+  return mergeKnockouts(out);
+}
+/* Knocked-out text over a filled bar previously relied on LightBurn's
+   "fill all shapes at once" setting to cut the letters out. Now that the text
+   is geometry, fold the letter rings into the bar as holes instead — one shape
+   with even-odd winding, which fills correctly whatever the layer is set to. */
+function mergeKnockouts(prims){
+  const out = prims.slice();
+  for(let i=0;i<out.length;i++){
+    const t = out[i];
+    if(!(t.t==="poly" && t.fromText && t.invert)) continue;
+    let host = -1;
+    for(let j=i-1;j>=0;j--){
+      const h = out[j];
+      const box = h.t==="rect" && h.filled && !h.rx && !h.rot
+        ? {x:h.x, y:h.y, w:h.w, h:h.h} : null;
+      if(!box) continue;
+      const fits = t.rings.every(r => r.every(q =>
+        q[0] >= box.x-1e-6 && q[0] <= box.x+box.w+1e-6 &&
+        q[1] >= box.y-1e-6 && q[1] <= box.y+box.h+1e-6));
+      if(fits){ host = j; break; }
+    }
+    if(host < 0) continue;
+    const h = out[host];
+    out[host] = { t:"poly", filled:true, knockHost:true, rings:[
+      [[h.x,h.y],[h.x+h.w,h.y],[h.x+h.w,h.y+h.h],[h.x,h.y+h.h]],
+      ...t.rings
+    ]};
+    out.splice(i,1); i--;
+  }
+  return out;
+}
+
+function countOutlinePoints(){
+  let n = 0;
+  sheetFaces().faces.forEach(f => outlineText(f.prims).forEach(p => {
+    if(p.t==="poly") p.rings.forEach(r => n += r.length);
+  }));
+  return n;
+}
+
 /* ============================================================================
    MARKBENCH — panels, image pipeline, laser recipes, export, boot
    ========================================================================== */
@@ -2862,6 +3015,16 @@ function panelExport(){
       Fixture and export again for the rest — or use <b>All runs</b> below.</div>`:""}
     ${issues.length?`<div class="callout bad">Outside the safe area: ${esc(issues.slice(0,3).join(", "))}
       ${issues.length>3?" +"+(issues.length-3)+" more":""}</div>`:""}
+    <div class="divider"></div>
+    <div class="row">${fSeg("Text","doc.textOut",[["outline","Outlines — exact"],["live","Live text — editable"]])}</div>
+    ${doc.textOut==="outline"
+      ? `<p class="hint" style="margin-top:0">Every text run is converted to closed outlines positioned
+           exactly where the editor shows it. No dependency on LightBurn's text engine and no need for
+           the font to exist on the laser PC. Files are larger and the text is no longer editable there.</p>`
+      : `<div class="row">${fNum("Vertical nudge mm","doc.lbTextNudge",0.1)}</div>
+         <p class="hint" style="margin-top:0">LightBurn anchors text by the top of the character box, which
+           this compensates for. If your version places it differently, mark one lock and dial the nudge in —
+           positive moves text up.</p>`}
     <div class="btnrow split" style="margin-top:10px">
       <button class="btn pri" data-act="exlbrn">.lbrn</button>
       <button class="btn pri" data-act="exsvg">.svg</button>
@@ -3031,6 +3194,7 @@ async function afterEdit(path){
     renderRail(); updateStatus();
   }
   if(path==="doc.laser.materialId"){ doc.laser.trim=0; doc.laser.manual=false; renderRail(); }
+  if(path==="doc.textOut") renderRail(true);
   if(path.startsWith("doc.machines")||path.startsWith("doc.materials")) renderRail();
   if(path.startsWith("doc.fixture")){
     doc.fixture.batch = clamp(doc.fixture.batch||0, 0, batchCount()-1);
@@ -3181,15 +3345,19 @@ async function action(a){
     case "testgrid": download("hl50e-test-grid.lbrn", testGrid(), "application/xml"); toast("Test grid saved"); break;
     case "exall": {
       const n = batchCount(), keep = doc.fixture.batch;
-      for(let b=0;b<n;b++){
-        doc.fixture.batch = b;
-        download(fileStem()+"-run"+(b+1)+".lbrn", exportLBRN(), "application/xml");
-      }
+      await withBusy("Building "+n+" run files", ()=>{
+        for(let b=0;b<n;b++){
+          doc.fixture.batch = b;
+          download(fileStem()+"-run"+(b+1)+".lbrn", exportLBRN(), "application/xml");
+        }
+      });
       doc.fixture.batch = keep; fixtureChanged();
       toast(n+" run files saved"); break;
     }
-    case "exsvg": download(fileStem()+".svg", exportSVG(), "image/svg+xml"); toast("SVG saved"); break;
-    case "exlbrn": download(fileStem()+".lbrn", exportLBRN(), "application/xml"); toast("LightBurn file saved"); break;
+    case "exsvg": await withBusy("Building SVG", ()=>{
+        download(fileStem()+".svg", exportSVG(), "image/svg+xml"); }); toast("SVG saved"); break;
+    case "exlbrn": await withBusy("Building LightBurn file", ()=>{
+        download(fileStem()+".lbrn", exportLBRN(), "application/xml"); }); toast("LightBurn file saved"); break;
     case "savejson": download(fileStem()+".json", JSON.stringify(doc), "application/json"); toast("Project saved"); break;
     case "loadjson": {
       const f = $("fileJson"); f.value="";
@@ -3207,6 +3375,13 @@ async function action(a){
       f.click(); break;
     }
   }
+}
+/* exports trace every text run, which takes a moment on a big sheet */
+function withBusy(msg, fn){
+  toast(msg + "…");
+  return new Promise(res => requestAnimationFrame(()=> setTimeout(()=>{
+    try{ fn(); } finally { res(); }
+  }, 0)));
 }
 function fileStem(){
   const n = batchCount();
@@ -3589,12 +3764,12 @@ const FB_CDN = "https://www.gstatic.com/firebasejs/" + FB_VERSION;
    remember it in the browser. A Firebase web apiKey is an identifier, not a
    secret — access is controlled by your Firestore rules. */
 const FIREBASE_BUILTIN = {
-  apiKey: "AIzaSyB_XxddCEQX3X9yKsWMPOyhzPiPCNPRu_c",
-  authDomain: "markbench-e351d.firebaseapp.com",
-  projectId: "markbench-e351d",
-  appId: "1:1032442534462:web:9d0c949d7584495f4acf6f",
-  storageBucket: "markbench-e351d.firebasestorage.app",
-  messagingSenderId: "1032442534462",
+  apiKey: "",
+  authDomain: "",
+  projectId: "",
+  appId: "",
+  storageBucket: "",
+  messagingSenderId: "",
   workspace: "shop",
   authMode: "anonymous"        // "anonymous" | "google"
 };
