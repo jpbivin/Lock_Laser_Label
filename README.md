@@ -224,6 +224,12 @@ pitch dimensioned between the first two.
 
 - Drag a lock to move that one off pitch; the rest of the array stays put.
 - Tap a lock to skip that pocket — broken clamp, missing fixture insert.
+- Rotate a cell 90/180/270 when the fixture holds that lock the other way up.
+  **Flip rows 2, 4, 6…** does alternating rows in one press. The artwork turns
+  with the lock, so the fixture never has to change.
+- **Marked area** reports the overall centre and size exactly as LightBurn
+  reports a selection. Type your fixture's X and Y into *Place centre at* and
+  the whole array moves there — set once, keep forever.
 - Arrow keys nudge the selected cell by one grid step.
 - *Centre in field* and *Fill the field* set the array up in one press.
 - Stagger offsets odd rows for a brick-pattern fixture.

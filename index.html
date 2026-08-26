@@ -579,7 +579,7 @@ input[type=color]{width:100%;height:30px;padding:2px;background:var(--chrome-2);
    ========================================================================== */
 "use strict";
 
-const BUILD = "2026.08.25-a";
+const BUILD = "2026.08.26-a";
 const MM   = 25.4;
 const CAPR = 0.716;              // cap height / em for the sans faces we ship with
 const FONTS = ["Arial","Arial Black","Arial Narrow","Verdana","Tahoma",
@@ -718,7 +718,7 @@ function defaultDoc(){
     fixture:{ rows:2, cols:3, pitchX:1.75, pitchY:2.40,
               originX:0.90, originY:0.85, stagger:0,
               order:"row", field:110/MM, batch:0,
-              moved:{}, skipped:{} },
+              moved:{}, skipped:{}, rot:{} },
     laser:{ materialId:"anodized", trim:0, manual:false,
             speed:0, power:0, freq:0, interval:0, passes:1, fill:"scan", pulse:0 }
   };
@@ -813,7 +813,7 @@ function migrateDoc(d){
     const rows = Math.max(1, Math.floor(((field>0?field:pitchY*3) + 1e-6) / pitchY)) || 1;
     d.fixture = { rows, cols, pitchX, pitchY,
                   originX: pitchX/2 + 0.1, originY: pitchY/2 + 0.1,
-                  stagger:0, order:"row", field, batch:0, moved:{}, skipped:{} };
+                  stagger:0, order:"row", field, batch:0, moved:{}, skipped:{}, rot:{} };
   }
   /* machines + material library arrived after the first releases */
   if(!Array.isArray(d.machines) || !d.machines.length){
@@ -839,7 +839,7 @@ function migrateDoc(d){
   if(d.laser.pulse===undefined) d.laser.pulse = 0;
 
   const f = d.fixture;
-  f.moved = f.moved || {}; f.skipped = f.skipped || {};
+  f.moved = f.moved || {}; f.skipped = f.skipped || {}; f.rot = f.rot || {};
   if(f.batch === undefined) f.batch = 0;
   if(f.stagger === undefined) f.stagger = 0;
   if(f.field === undefined) f.field = 110/MM;
@@ -1091,6 +1091,31 @@ function rosterCtx(i){
            date:new Date().toISOString().slice(0,10) };
 }
 
+/* Rotate a rendered face about a point. A prim is (axis-aligned geometry,
+   angle, centre); adding a rotation moves the centre and sums the angle, with
+   the stored coordinates carried along by the same delta. */
+function rotatePrims(prims, C, deg){
+  if(!deg) return prims;
+  const spin = (p) => rotPt(p, C[0], C[1], deg);
+  return prims.map(p=>{
+    if(p.t==="poly"){
+      return Object.assign({}, p, { rings: p.rings.map(r => r.map(spin)) });
+    }
+    const oldRc = p.rc || [0,0];
+    const newRc = spin(oldRc);
+    const dx = newRc[0]-oldRc[0], dy = newRc[1]-oldRc[1];
+    const q = Object.assign({}, p, { rot:(p.rot||0)+deg, rc:newRc });
+    q.x = p.x + dx; q.y = p.y + dy;
+    return q;
+  });
+}
+function facePrims2(f){
+  let prims = doc.textOut==="outline" ? outlineText(f.prims) : f.prims;
+  const deg = f.cell && f.cell.rot;
+  if(deg) prims = rotatePrims(prims, [doc.label.w/2, doc.label.h/2], deg);
+  return prims;
+}
+
 /* --------------------------------------------------------- SVG serialiser --- */
 function primSvg(p, ox, oy, k, opt){
   const X = v => r3((v+ox)*k), Y = v => r3((v+oy)*k);
@@ -1136,7 +1161,7 @@ const cellKey = (r,c) => r+"_"+c;
 
 function cellCenter(r,c){
   const f = doc.fixture;
-  const mv = f.moved[cellKey(r,c)] || {dx:0, dy:0};
+  const mv = (f.moved||{})[cellKey(r,c)] || {dx:0, dy:0};
   return { x: f.originX + c*f.pitchX + (r%2 ? f.stagger : 0) + mv.dx,
            y: f.originY + r*f.pitchY + mv.dy };
 }
@@ -1151,7 +1176,8 @@ function fixtureCells(){
     else if(f.order==="serp"){ r = Math.floor(i/cols); const k = i%cols; c = (r%2) ? cols-1-k : k; }
     else { r = Math.floor(i/cols); c = i%cols; }
     const p = cellCenter(r,c);
-    out.push({ r, c, x:p.x, y:p.y, skip: !!f.skipped[cellKey(r,c)] });
+    out.push({ r, c, x:p.x, y:p.y, skip: !!(f.skipped||{})[cellKey(r,c)],
+               rot: (f.rot||{})[cellKey(r,c)] || 0 });
   }
   return out;
 }
@@ -1189,8 +1215,11 @@ function fixtureOversize(){
   if(doc.fixture.field <= 0) return out;
   fixtureCells().forEach(c=>{
     if(c.skip) return;
-    if(c.x-doc.label.w/2 < -1e-6 || c.y-doc.label.h/2 < -1e-6 ||
-       c.x+doc.label.w/2 > fr.w+1e-6 || c.y+doc.label.h/2 > fr.h+1e-6)
+    const quarter = (c.rot===90 || c.rot===270);
+    const hw = (quarter ? doc.label.h : doc.label.w)/2;
+    const hh = (quarter ? doc.label.w : doc.label.h)/2;
+    if(c.x-hw < -1e-6 || c.y-hh < -1e-6 ||
+       c.x+hw > fr.w+1e-6 || c.y+hh > fr.h+1e-6)
       out.push(c.r+1+"×"+(c.c+1));
   });
   return out;
@@ -1242,6 +1271,12 @@ function sheetFaces(batchIdx){
            w:fr.w, h:fr.h, field:fr };
 }
 
+function exportStamp(){
+  const n = doc.textOut==="outline" ? "outlines" : "live LightBurn text";
+  return `Markbench ${BUILD} · text as ${n} · ${activeMachine().name} · `
+       + `${activeMaterial().name} · ${new Date().toISOString().slice(0,16).replace("T"," ")}`;
+}
+
 function exportSVG(){
   const sh = sheetFaces(), k = MM;
   const opt = { forExport:true, ink:"#000000", knock:"#FFFFFF", guide:"#BBBBBB" };
@@ -1250,9 +1285,10 @@ function exportSVG(){
     + `width="${r3(sh.w*k)}mm" height="${r3(sh.h*k)}mm" `
     + `viewBox="0 0 ${r3(sh.w*k)} ${r3(sh.h*k)}">\n`
     + `<title>${esc(doc.name)} — ${sh.faces.length} faces`
-    + (sh.batches>1 ? ` — batch ${sh.batch+1} of ${sh.batches}` : "") + `</title>\n`;
+    + (sh.batches>1 ? ` — batch ${sh.batch+1} of ${sh.batches}` : "") + `</title>\n`
+    + `<desc>${esc(exportStamp())}</desc>\n`;
   sh.faces.forEach((f,i)=>{
-    const prims = doc.textOut==="outline" ? outlineText(f.prims) : f.prims;
+    const prims = facePrims2(f);
     s += `<g id="${esc("face_"+(i+1)+"_"+f.name.replace(/[^A-Za-z0-9]+/g,"_"))}">\n`;
     prims.forEach(p=>{ const t = primSvg(p, f.ox, f.oy, k, opt); if(t) s += "  "+t+"\n"; });
     s += `</g>\n`;
@@ -1332,18 +1368,67 @@ function primLbrn(p, ox, oy, H, pad){
 }
 function exportLBRN(){
   const sh = sheetFaces(), H = sh.h*MM, p = laserEffective();
+  const stamp = exportStamp();
   let s = `<?xml version="1.0" encoding="UTF-8"?>\n`
+    + `<!-- ${esc(stamp)} -->\n`
     + `<LightBurnProject AppVersion="1.7.00" DeviceName="${esc(activeMachine().name)}" FormatVersion="1" `
-    + `MaterialHeight="0" MirrorX="False" MirrorY="False">\n`;
+    + `MaterialHeight="0" MirrorX="False" MirrorY="False">\n`
+    + `  <Notes ShowOnLoad="0" Notes="${esc(stamp)}"/>\n`;
   s += lbCut(0, activeMaterial().name.slice(0,30), p, doc.laser.fill==="cut", true);
   s += lbCut(1, "Guide — no output", {power:10,speed:1000,freq:30,passes:1,interval:0.05}, true, false);
   sh.faces.forEach(f=>{
     s += `  <Shape Type="Group">\n    <XForm>1 0 0 1 0 0</XForm>\n    <Children>\n`;
-    const prims = doc.textOut==="outline" ? outlineText(f.prims) : f.prims;
-    prims.forEach(q=> s += primLbrn(q, f.ox, f.oy, H, "      "));
+    facePrims2(f).forEach(q=> s += primLbrn(q, f.ox, f.oy, H, "      "));
     s += `    </Children>\n  </Shape>\n`;
   });
   return s + `</LightBurnProject>\n`;
+}
+
+/* Overall extents of everything that will be marked, reported the way
+   LightBurn reports a selection: centre and size, Y measured up from the bed. */
+/* Axis-aligned extents of one primitive, honouring its rotation. */
+function primBBox(p){
+  if(p.t==="ph") return null;
+  if(p.t==="poly"){
+    const xs=[], ys=[];
+    p.rings.forEach(r=>r.forEach(v=>{xs.push(v[0]);ys.push(v[1]);}));
+    if(!xs.length) return null;
+    return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+  }
+  let a,b,c,d;
+  if(p.t==="text"){ a=p.x; c=p.x+p.w; b=p.y-p.cap; d=p.y; }
+  else { a=p.x; b=p.y; c=p.x+p.w; d=p.y+p.h; }
+  if(!p.rot) return [a,b,c,d];
+  const rc = p.rc || [(a+c)/2, (b+d)/2];
+  const pts = [[a,b],[c,b],[c,d],[a,d]].map(q => rotPt(q, rc[0], rc[1], p.rot));
+  const xs = pts.map(q=>q[0]), ys = pts.map(q=>q[1]);
+  return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+}
+
+function sheetBounds(){
+  const sh = sheetFaces(), fr = fieldRect();
+  let x0=1e9, y0=1e9, x1=-1e9, y1=-1e9;
+  sh.faces.forEach(f=>{
+    facePrims2(f).forEach(p=>{
+      const bb = primBBox(p); if(!bb) return;
+      const [a,b,c,d] = bb;
+      x0=Math.min(x0,a+f.ox); x1=Math.max(x1,c+f.ox);
+      y0=Math.min(y0,b+f.oy); y1=Math.max(y1,d+f.oy);
+    });
+  });
+  if(x0>x1) return null;
+  const w=(x1-x0)*MM, h=(y1-y0)*MM;
+  return { w, h,
+           cx: (x0+x1)/2*MM,
+           cy: fr.h*MM - (y0+y1)/2*MM,     // LightBurn measures Y upward
+           top: fr.h*MM - y0*MM, bottom: fr.h*MM - y1*MM,
+           left: x0*MM, right: x1*MM };
+}
+/* shift the whole array so the marked area centres on a LightBurn coordinate */
+function placeArrayAt(lbX, lbY){
+  const b = sheetBounds(); if(!b) return;
+  doc.fixture.originX += (lbX - b.cx)/MM;
+  doc.fixture.originY += (b.cy - lbY)/MM;
 }
 
 /* ------------------------------------------------------------ fit checker --- */
@@ -1559,6 +1644,9 @@ function drawFixture(){
     const face = assigned.get(k);
     const moved = !!F.moved[k];
 
+    const spin = cell.rot ? ` transform="rotate(${r3(cell.rot)} ${r3(cx)} ${r3(cy)})"` : "";
+    s += `<g${spin}>`;
+
     /* lock body silhouette under the label */
     if(ui.showLock){
       s += `<rect x="${r3(lx + lockOff.x)}" y="${r3(ly + lockOff.y)}" width="${r3(doc.lock.w)}"`
@@ -1585,6 +1673,8 @@ function drawFixture(){
         + (cell.skip ? "SKIP" : "EMPTY") + `</text>`;
     }
 
+    s += `</g>`;
+
     /* centre crosshair — the thing you are actually positioning */
     const t = px(9);
     s += `<g opacity="${cell.skip?.5:1}">`
@@ -1598,7 +1688,7 @@ function drawFixture(){
       const idx = face ? (sh.faces.indexOf(face)+1) : null;
       s += `<text x="${r3(lx)}" y="${r3(ly - px(4))}" fill="${sel?"#2BC5D9":"#8593A8"}"`
         + ` font-family="ui-monospace,monospace" font-size="${r3(fs)}">${cell.r+1}·${cell.c+1}`
-        + (idx?`  #${idx}`:"") + `</text>`;
+        + (idx?`  #${idx}`:"") + (cell.rot?`  ${cell.rot}°`:"") + `</text>`;
       if(face){
         s += `<text x="${r3(cx)}" y="${r3(ly + L.h + fs*1.5)}" fill="#8593A8" text-anchor="middle"`
           + ` font-family="ui-monospace,monospace" font-size="${r3(fs)}">${esc(face.short)} · ${esc(face.faceName)}</text>`;
@@ -1656,7 +1746,9 @@ function hitCell(w){
   for(let i=cells.length-1;i>=0;i--){
     const c = cells[i];
     const cx = c.x-fr.x, cy = c.y-fr.y;
-    if(Math.abs(w.x-cx) <= L.w/2 && Math.abs(w.y-cy) <= L.h/2) return c;
+    const quarter = (c.rot===90 || c.rot===270);
+    const hw = (quarter ? L.h : L.w)/2, hh = (quarter ? L.w : L.h)/2;
+    if(Math.abs(w.x-cx) <= hw && Math.abs(w.y-cy) <= hh) return c;
   }
   return null;
 }
@@ -2783,6 +2875,8 @@ function panelFixture(){
   const F = doc.fixture, sh = sheetFaces(), fr = fieldRect();
   const over = fixtureOversize();
   const movedN = Object.keys(F.moved).length, skipN = Object.keys(F.skipped).length;
+  const rotN = Object.keys(F.rot||{}).filter(k=>F.rot[k]).length;
+  const bounds = sheetBounds();
   const sel = ui.fixSel ? ui.fixSel.split("_").map(Number) : null;
   const selC = sel ? cellCenter(sel[0], sel[1]) : null;
 
@@ -2817,6 +2911,20 @@ function panelFixture(){
     ${(F.pitchX < doc.label.w - 1e-6 || F.pitchY < doc.label.h - 1e-6)?`<div class="callout bad">
       Pitch is tighter than the label (${U.fmt(doc.label.w,3)} × ${U.fmt(doc.label.h,3)} ${U.label()}).
       Neighbouring marks will overlap — raise the pitch or shrink the label.</div>`:""}
+    ${bounds?`<div class="readout" style="margin-top:9px">
+      <b>Marked area X</b><span>${r3(bounds.cx)} mm</span>
+      <b>Marked area Y</b><span>${r3(bounds.cy)} mm</span>
+      <b>Size</b><span>${r3(bounds.w)} × ${r3(bounds.h)} mm</span>
+    </div>
+    <div class="row c2" style="margin-top:8px">
+      <label class="fld"><span>Place centre at X (mm)</span>
+        <input type="number" step="0.1" id="fxAtX" value="${r3(bounds.cx)}"></label>
+      <label class="fld"><span>Place centre at Y (mm)</span>
+        <input type="number" step="0.1" id="fxAtY" value="${r3(bounds.cy)}"></label>
+    </div>
+    <div class="btnrow"><button class="btn sm wide" data-act="fxplace">Move the array there</button></div>
+    <p class="hint">These are the numbers LightBurn shows when you select everything, so you can match
+      your fixture once and keep it.</p>`:""}
     ${over.length?`<div class="callout bad">Off the field at ${esc(over.slice(0,4).join(", "))}${over.length>4?" +"+(over.length-4):""}.
       Reduce the pitch or the count, or centre the array.</div>`:""}
     ${sh.batches>1?`<div class="callout">More locks than the fixture holds. Load ${sh.capacity} at a time and
@@ -2842,16 +2950,30 @@ function panelFixture(){
         <b>In millimetres</b><span>${r3(selC.x*MM)}, ${r3(selC.y*MM)}</span>
         <b>Status</b><span>${doc.fixture.skipped[ui.fixSel]?"skipped":doc.fixture.moved[ui.fixSel]?"moved":"on pitch"}</span>
       </div>
+      <div class="row" style="margin-top:8px"><label class="fld"><span>Rotation in the pocket</span>
+        <div class="seg" data-cellrot>
+          ${[0,90,180,270].map(a=>`<button type="button" data-v="${a}"
+             aria-pressed="${(doc.fixture.rot[ui.fixSel]||0)===a}">${a}°</button>`).join("")}
+        </div></label></div>
       <div class="btnrow split" style="margin-top:8px">
         <button class="btn sm" data-act="fxtoggle">${doc.fixture.skipped[ui.fixSel]?"Use this cell":"Skip this cell"}</button>
         <button class="btn sm ghost" data-act="fxsnapback">Back on pitch</button>
       </div>`
     : `<div class="empty">Tap a lock on the bed to skip it, or drag it off pitch.</div>`}
     <div class="divider"></div>
-    <div class="row c2">
-      <div class="btnrow"><button class="btn sm ghost wide" data-act="fxclearmoved">Clear moved (${movedN})</button></div>
-      <div class="btnrow"><button class="btn sm ghost wide" data-act="fxclearskip">Clear skipped (${skipN})</button></div>
+    <div class="subhead" style="font-family:var(--cond);font-size:10px;letter-spacing:.1em;
+      text-transform:uppercase;color:var(--text-3);margin:12px 0 6px">Whole rows</div>
+    <div class="btnrow split">
+      <button class="btn sm" data-act="fxflipodd">Flip rows 2, 4, 6…</button>
+      <button class="btn sm" data-act="fxflipall">Flip every cell</button>
     </div>
+    <div class="row c3" style="margin-top:8px">
+      <div class="btnrow"><button class="btn sm ghost wide" data-act="fxclearmoved">Moved (${movedN})</button></div>
+      <div class="btnrow"><button class="btn sm ghost wide" data-act="fxclearskip">Skipped (${skipN})</button></div>
+      <div class="btnrow"><button class="btn sm ghost wide" data-act="fxclearrot">Rotated (${rotN})</button></div>
+    </div>
+    <p class="hint">If your fixture holds the bottom row shackle-down, flip those cells and the artwork
+      turns with the lock — the fixture stays as it is.</p>
     <p class="hint">A fixture with an odd pocket or a broken clamp: drag that one lock where it really sits,
       or tap it to leave the pocket empty. The rest of the array stays on pitch.</p>
   </div></section>`;
@@ -3010,7 +3132,13 @@ function panelExport(){
       <b>Bed size</b><span>${r3(sh.w*MM)} × ${r3(sh.h*MM)} mm</span>
       <b>Run</b><span>${sh.batch+1} of ${sh.batches}</span>
       <b>Locks</b><span>${doc.roster.length}</span>
+      <b>Text</b><span style="color:${doc.textOut==="outline"?"var(--ok)":"var(--amber)"}">
+        ${doc.textOut==="outline"?"outlines":"live text"}</span>
+      <b>Build</b><span>${BUILD}</span>
     </div>
+    ${doc.textOut!=="outline"?`<div class="callout">Live text is positioned by LightBurn, not by this
+      app. If a headline sits under its bar or a rule strikes through its line, switch Text to
+      <b>Outlines</b> below and export again.</div>`:""}
     ${sh.batches>1?`<div class="callout">This exports run ${sh.batch+1} only. Step to the next run in
       Fixture and export again for the rest — or use <b>All runs</b> below.</div>`:""}
     ${issues.length?`<div class="callout bad">Outside the safe area: ${esc(issues.slice(0,3).join(", "))}
@@ -3145,6 +3273,13 @@ function bindPanel(root){
       renderRail(); drawStage();
     });
   });
+  const cr = root.querySelector("[data-cellrot]");
+  if(cr) cr.addEventListener("click", e=>{
+    const b = e.target.closest("button[data-v]"); if(!b || !ui.fixSel) return;
+    const deg = parseInt(b.dataset.v)||0;
+    if(deg) doc.fixture.rot[ui.fixSel] = deg; else delete doc.fixture.rot[ui.fixSel];
+    fixtureChanged();
+  });
   const rq = root.querySelector("[data-rotq]");
   if(rq) rq.addEventListener("click", e=>{
     const b = e.target.closest("button[data-v]"); if(!b) return;
@@ -3262,6 +3397,30 @@ async function action(a){
     }
     case "fxsnapback": if(ui.fixSel) delete doc.fixture.moved[ui.fixSel]; fixtureChanged(); break;
     case "fxclearmoved": doc.fixture.moved = {}; fixtureChanged(); break;
+    case "fxclearrot": doc.fixture.rot = {}; fixtureChanged(); break;
+    case "fxflipodd": {
+      const F = doc.fixture, rows = Math.max(1, Math.round(F.rows));
+      for(let r=0;r<rows;r++) for(let c=0;c<Math.max(1,Math.round(F.cols));c++){
+        const k = cellKey(r,c);
+        if(r%2===1) F.rot[k] = 180; else delete F.rot[k];
+      }
+      fixtureChanged(); toast("Alternate rows flipped"); break;
+    }
+    case "fxflipall": {
+      const F = doc.fixture;
+      const allFlipped = fixtureCells().every(c=>c.rot===180);
+      fixtureCells().forEach(c=>{
+        const k = cellKey(c.r,c.c);
+        if(allFlipped) delete F.rot[k]; else F.rot[k] = 180;
+      });
+      fixtureChanged(); break;
+    }
+    case "fxplace": {
+      const x = parseFloat(($("fxAtX")||{}).value), y = parseFloat(($("fxAtY")||{}).value);
+      if(!isFinite(x) || !isFinite(y)) return;
+      placeArrayAt(x, y); fixtureChanged();
+      toast("Array centred on " + r3(x) + ", " + r3(y) + " mm"); break;
+    }
     case "fxclearskip": doc.fixture.skipped = {}; fixtureChanged(); break;
     case "reset": if(confirm("Discard this design and start from the default layout?")) resetDoc(); break;
     case "loadcsv": {
