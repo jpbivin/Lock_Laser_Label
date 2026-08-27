@@ -579,7 +579,7 @@ input[type=color]{width:100%;height:30px;padding:2px;background:var(--chrome-2);
    ========================================================================== */
 "use strict";
 
-const BUILD = "2026.08.26-a";
+const BUILD = "2026.08.26-b";
 const MM   = 25.4;
 const CAPR = 0.716;              // cap height / em for the sans faces we ship with
 const FONTS = ["Arial","Arial Black","Arial Narrow","Verdana","Tahoma",
@@ -3941,7 +3941,7 @@ const cloud = {
   err:null, uid:null, who:"",
   fb:null, db:null, auth:null,
   designs:[], people:[], presets:[],
-  curId:null, curName:"", busy:false, unsub:[]
+  curId:null, curName:"", openId:null, filter:"", busy:false, unsub:[]
 };
 
 function cloudCfg(){
@@ -4030,6 +4030,52 @@ function cloudDisconnect(){
 function designPayload(){ return JSON.stringify(doc); }
 function payloadSize(){ return new Blob([designPayload()]).size; }
 
+/* Everything worth knowing about a design without downloading its payload,
+   so the library list is useful on its own. */
+function designMeta(name, size){
+  const M = activeMachine(), mat = activeMaterial(), F = doc.fixture;
+  const p = laserEffective();
+  const els = {};
+  doc.faces.forEach(f => f.els.forEach(e => { els[e.type] = (els[e.type]||0)+1; }));
+  return {
+    name, updatedBy: cloud.who || "unknown", updatedAt: cloud.fb.fs.serverTimestamp(),
+    bytes: size, schema: 2, build: BUILD, units: doc.units,
+
+    faces: doc.faces.length, locks: doc.roster.length,
+    faceNames: doc.faces.map(f=>f.name).join(" · ").slice(0,80),
+    elements: Object.entries(els).map(([k,v])=>v+" "+k).join(", "),
+
+    lockW: r3(doc.lock.w*MM),   lockH: r3(doc.lock.h*MM),
+    labelW: r3(doc.label.w*MM), labelH: r3(doc.label.h*MM),
+    pad: r3(doc.pad*MM),
+
+    fixRows: Math.round(F.rows), fixCols: Math.round(F.cols),
+    pitchX: r3(F.pitchX*MM), pitchY: r3(F.pitchY*MM),
+    field: F.field>0 ? Math.round(F.field*MM) : 0,
+    fixRotated: Object.keys(F.rot||{}).filter(k=>F.rot[k]).length,
+    fixSkipped: Object.keys(F.skipped||{}).length,
+    fixMoved: Object.keys(F.moved||{}).length,
+
+    machine: M.name, machineWatts: M.watts, machineSource: M.source, lens: M.lens,
+
+    material: mat.name, proven: !!mat.proven,
+    speed: p.speed, power: p.power, freq: p.freq,
+    interval: p.interval, passes: p.passes, pulse: p.pulse||0,
+    fill: doc.laser.fill, textOut: doc.textOut
+  };
+}
+
+async function cloudRenameDesign(id, current){
+  const name = (prompt("Rename this design", current) || "").trim();
+  if(!name || name === current) return;
+  const { doc:dref, setDoc } = cloud.fb.fs;
+  try{
+    await setDoc(dref(cloud.db, wsPath()+"/designs/"+id), {name}, {merge:true});
+    if(cloud.curId === id){ doc.name = name; updateStatus(); saveLocal(); }
+    toast("Renamed");
+  }catch(e){ cloud.err = friendlyCloudError(e); renderCloud(); }
+}
+
 async function cloudSaveDesign(asNew){
   if(cloud.state!=="ready" || cloud.busy) return;
   const body = designPayload(), size = new Blob([body]).size;
@@ -4038,12 +4084,10 @@ async function cloudSaveDesign(asNew){
     return;
   }
   const name = (doc.name || "Untitled").slice(0,60);
-  const { doc:dref, collection, setDoc, addDoc, serverTimestamp } = cloud.fb.fs;
+  const { doc:dref, collection, setDoc, addDoc } = cloud.fb.fs;
   cloud.busy = true; renderCloud();
   try{
-    const meta = { name, updatedBy: cloud.who || "unknown", updatedAt: serverTimestamp(),
-                   faces: doc.faces.length, locks: doc.roster.length,
-                   labelW: r3(doc.label.w*MM), labelH: r3(doc.label.h*MM), bytes: size };
+    const meta = designMeta(name, size);
     let id = asNew ? null : cloud.curId;
     if(id){
       await setDoc(dref(cloud.db, wsPath()+"/designs/"+id), meta, {merge:true});
@@ -4052,7 +4096,7 @@ async function cloudSaveDesign(asNew){
       id = ref.id;
     }
     await setDoc(dref(cloud.db, wsPath()+"/designs/"+id+"/body/main"), { data: body });
-    cloud.curId = id; cloud.curName = name;
+    cloud.curId = id; cloud.curName = name; cloud.openId = id;
     toast(asNew ? "Saved as a new design" : "Saved to the shop library");
   }catch(e){ cloud.err = friendlyCloudError(e); toast("Save failed"); }
   cloud.busy = false; renderCloud();
@@ -4066,8 +4110,8 @@ async function cloudOpenDesign(id){
     if(!snap.exists()) throw new Error("That design has no saved body.");
     const d = JSON.parse(snap.data().data);
     if(!d || !Array.isArray(d.faces) || !d.faces.length) throw new Error("bad payload");
-    doc = d; ui.faceIdx = 0; ui.sel = []; ui.previewIdx = 0;
-    cloud.curId = id;
+    doc = migrateDoc(d); ui.faceIdx = 0; ui.sel = []; ui.previewIdx = 0;
+    cloud.curId = id; cloud.openId = id;
     reflowAll(); buildAll(); fitView();
     toast("Opened " + (doc.name||"design"));
   }catch(e){ cloud.err = friendlyCloudError(e); toast("Couldn't open that one"); }
@@ -4235,26 +4279,65 @@ function panelCloud(){
     </div>
     ${heavy?`<div class="callout">This design is heavy for one record. Drop graphic resolution to 300 dpi
       or use 1-bit mode before saving.</div>`:""}
-    <div class="btnrow split" style="margin-top:9px">
-      <button class="btn pri" data-act="cloudput" ${cloud.busy?"disabled":""}>${cloud.curId?"Save":"Save to library"}</button>
-      <button class="btn" data-act="cloudputnew" ${cloud.busy?"disabled":""}>Save as new</button>
-    </div>
-    <div class="btnrow" style="margin-top:6px">
+    <div class="btnrow" style="margin-top:9px">
       <button class="btn sm ghost wide" data-act="cloudoff">Disconnect</button>
     </div>
   </div></section>
 
+  <section class="sec"><h3>This design</h3><div class="body">
+    <div class="row">${fText("Design name","doc.name")}</div>
+    <p class="hint" style="margin-top:0">Give each lock type its own name — "Red thermoplastic 1.5in",
+      "Aluminium tag", "Electrical dept" — and Save keeps them as separate entries.</p>
+    <div class="btnrow split" style="margin-top:9px">
+      <button class="btn pri" data-act="cloudput" ${cloud.busy?"disabled":""}>${cloud.curId?"Save changes":"Save to library"}</button>
+      <button class="btn" data-act="cloudputnew" ${cloud.busy?"disabled":""}>Save as new</button>
+    </div>
+    ${cloud.curId?`<p class="hint">Editing <b>${esc(cloud.curName||doc.name)}</b>. "Save changes" overwrites it;
+      "Save as new" forks a copy.</p>`:""}
+  </div></section>
+
   <section class="sec"><h3>Shop library <span class="tag">${cloud.designs.length}</span></h3><div class="body">
-    ${cloud.designs.length ? `<div class="layers">${cloud.designs.map(d=>`
-      <div class="layer" aria-selected="${d.id===cloud.curId}">
-        <span class="nm">${esc(d.name||"Untitled")}
-          <em style="display:block;font-style:normal;font-size:11px;color:var(--text-3)">
-            ${d.labelW?`${d.labelW}×${d.labelH} mm · `:""}${d.faces||"?"} faces ·
-            ${esc(d.updatedBy||"")} ${fmtWhen(d.updatedAt)}</em></span>
-        <button class="mini" data-open="${d.id}" title="Open">↧</button>
-        <button class="mini" data-deldesign="${d.id}" data-name="${esc(d.name||"")}" title="Delete">✕</button>
-      </div>`).join("")}</div>`
-      : `<div class="empty">Nothing saved yet. Save this design to start the library.</div>`}
+    ${cloud.designs.length>6?`<div class="row"><input type="text" id="dsFilter" placeholder="Filter by name, machine or material"
+      value="${esc(cloud.filter||"")}"></div>`:""}
+    ${(() => {
+      const q = (cloud.filter||"").toLowerCase();
+      const list = cloud.designs.filter(d => !q ||
+        [d.name,d.machine,d.material,d.updatedBy].join(" ").toLowerCase().includes(q));
+      if(!list.length) return `<div class="empty">${cloud.designs.length?"Nothing matches that":"Nothing saved yet. Name this design above and save it."}</div>`;
+      return `<div class="layers">${list.map(d=>{
+        const open = cloud.openId===d.id;
+        return `<div class="layer" aria-selected="${d.id===cloud.curId}" style="flex-direction:column;align-items:stretch;gap:6px">
+          <div style="display:flex;align-items:center;gap:7px">
+            <span class="nm">${d.proven?"✓ ":""}${esc(d.name||"Untitled")}
+              <em style="display:block;font-style:normal;font-size:11px;color:var(--text-3)">
+                ${d.labelW?`${d.labelW}×${d.labelH} mm · `:""}${d.faces||"?"} faces · ${d.locks||"?"} locks
+                ${d.machine?" · "+esc(d.machine):""}</em></span>
+            <button class="mini" data-detail="${d.id}" title="Details">${open?"▾":"▸"}</button>
+            <button class="mini" data-open="${d.id}" title="Open">↧</button>
+            <button class="mini" data-rename="${d.id}" data-name="${esc(d.name||"")}" title="Rename">✎</button>
+            <button class="mini" data-deldesign="${d.id}" data-name="${esc(d.name||"")}" title="Delete">✕</button>
+          </div>
+          ${open?`<div class="readout" style="margin:0">
+            <b>Lock body</b><span>${d.lockW||"—"} × ${d.lockH||"—"} mm</span>
+            <b>Label</b><span>${d.labelW||"—"} × ${d.labelH||"—"} mm</span>
+            <b>Padding</b><span>${d.pad!==undefined?d.pad+" mm":"—"}</span>
+            <b>Fixture</b><span>${d.fixRows||"?"} × ${d.fixCols||"?"} @ ${d.pitchX||"?"} / ${d.pitchY||"?"} mm</span>
+            <b>Field</b><span>${d.field?d.field+" mm":"no limit"}</span>
+            ${(d.fixRotated||d.fixSkipped||d.fixMoved)?`<b>Cell edits</b><span>${d.fixRotated||0} rot · ${d.fixSkipped||0} skip · ${d.fixMoved||0} moved</span>`:""}
+            <b>Machine</b><span>${esc(d.machine||"—")}${d.machineWatts?" · "+d.machineWatts+" W":""}</span>
+            <b>Lens</b><span>${d.lens?d.lens+" mm":"—"}</span>
+            <b>Material</b><span>${esc(d.material||"—")}${d.proven?" ✓":""}</span>
+            <b>Settings</b><span>${d.speed||"?"} mm/s · ${d.power||"?"}% · ${d.freq||"?"} kHz</span>
+            <b>Interval</b><span>${d.interval!==undefined?d.interval+" mm":"—"} · ${d.passes||1}p</span>
+            ${d.pulse?`<b>Pulse</b><span>${d.pulse} ns</span>`:""}
+            <b>Elements</b><span>${esc(d.elements||"—")}</span>
+            <b>Text</b><span>${d.textOut==="live"?"live text":"outlines"}</span>
+            <b>Saved</b><span>${esc(d.updatedBy||"")} ${fmtWhen(d.updatedAt)}</span>
+            <b>Size</b><span>${d.bytes?Math.round(d.bytes/1024)+" KB":"—"}</span>
+          </div>
+          <button class="btn sm wide" data-open="${d.id}">Open this design</button>`:""}
+        </div>`;}).join("")}</div>`;
+    })()}
   </div></section>
 
   <section class="sec"><h3>Shared roster <span class="tag">${cloud.people.length}</span></h3><div class="body">
@@ -4297,6 +4380,14 @@ function cfgField(label, key, c){
 function cloudBind(root){
   const g = id => root.querySelector("#"+id);
   root.querySelectorAll("[data-open]").forEach(b=>b.addEventListener("click",()=>cloudOpenDesign(b.dataset.open)));
+  root.querySelectorAll("[data-detail]").forEach(b=>b.addEventListener("click",()=>{
+    cloud.openId = (cloud.openId===b.dataset.detail) ? null : b.dataset.detail;
+    renderRail(true);
+  }));
+  root.querySelectorAll("[data-rename]").forEach(b=>b.addEventListener("click",()=>
+    cloudRenameDesign(b.dataset.rename, b.dataset.name)));
+  const filt = root.querySelector("#dsFilter");
+  if(filt) filt.addEventListener("input", ()=>{ cloud.filter = filt.value; });
   root.querySelectorAll("[data-deldesign]").forEach(b=>b.addEventListener("click",()=>cloudDeleteDesign(b.dataset.deldesign, b.dataset.name)));
   root.querySelectorAll("[data-delperson]").forEach(b=>b.addEventListener("click",()=>cloudDeletePerson(b.dataset.delperson)));
   root.querySelectorAll("[data-preset]").forEach(b=>b.addEventListener("click",()=>cloudApplyPreset(b.dataset.preset)));

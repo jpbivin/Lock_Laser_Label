@@ -118,12 +118,24 @@ Firebase project.
 
 ```
 workspaces/{workspace}/
-  designs/{id}                 name, size, face count, who saved it, when
+  designs/{id}                 metadata — see below
   designs/{id}/body/main       the design payload (JSON)
   people/{id}                  first, last, dept — the shared roster
   presets/{id}                 shared materials, stamped with the machine
                                they were proved on
 ```
+
+Each design record carries enough to identify it without opening it: name,
+lock body and label size, padding, fixture rows/columns/pitch/field and how
+many cells are rotated, skipped or moved, machine and lens, material with its
+proven flag and full laser settings, element census, text mode, who saved it
+and when. The Cloud panel shows that as an expandable detail line, so you can
+tell two similar locks apart at a glance.
+
+Name each design in the Cloud tab — "Red thermoplastic 1.5in", "Aluminium tag
+2in" — and **Save as new** keeps them separate. Opening one restores the whole
+document: geometry, fixture layout including per-cell rotations, roster,
+machine, material and laser settings.
 
 The list view only reads the small metadata records, so opening the app doesn't
 pull down every design. The payload is fetched only when you open one.
