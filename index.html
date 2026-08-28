@@ -579,7 +579,7 @@ input[type=color]{width:100%;height:30px;padding:2px;background:var(--chrome-2);
    ========================================================================== */
 "use strict";
 
-const BUILD = "2026.08.26-d";
+const BUILD = "2026.08.27-b";
 const MM   = 25.4;
 const CAPR = 0.716;              // cap height / em for the sans faces we ship with
 const FONTS = ["Arial","Arial Black","Arial Narrow","Verdana","Tahoma",
@@ -606,7 +606,7 @@ const U = {
 function textEl(o){
   return Object.assign({
     id:uid("e_"), type:"text", name:"Text", anchor:"tc", ox:0, oy:0,
-    w:1.0, h:0.16, rot:0, visible:true, locked:false,
+    w:1.0, h:0.16, rot:0, visible:true, locked:false, output:true,
     text:"Text", font:"Arial", bold:true, italic:false, caps:false,
     cap:0.12, track:0, lead:1.45, align:"center", valign:"middle",
     fit:"shrink", invert:false
@@ -615,7 +615,7 @@ function textEl(o){
 function imageEl(o){
   return Object.assign({
     id:uid("e_"), type:"image", name:"Graphic", anchor:"tc", ox:0, oy:0,
-    w:0.6, h:0.3, rot:0, visible:true, locked:false,
+    w:0.6, h:0.3, rot:0, visible:true, locked:false, output:true,
     raw:null, data:null, bmp:null, srcW:0, srcH:0, bytes:0, isSvg:false,
     render:"trace",                       // trace = real outlines, raster = image fill
     paths:null, tracePts:0, traceRes:"", traceTol:0.3, traceMin:14,
@@ -625,14 +625,14 @@ function imageEl(o){
 function iconEl(o){
   return Object.assign({
     id:uid("e_"), type:"icon", name:"Symbol", anchor:"tc", ox:0, oy:0,
-    w:0.4, h:0.36, rot:0, visible:true, locked:false,
+    w:0.4, h:0.36, rot:0, visible:true, locked:false, output:true,
     icon:"danger", invert:false
   },o);
 }
 function shapeEl(o){
   return Object.assign({
     id:uid("e_"), type:"shape", name:"Shape", anchor:"tc", ox:0, oy:0,
-    w:1.0, h:0.02, rot:0, visible:true, locked:false,
+    w:1.0, h:0.02, rot:0, visible:true, locked:false, output:true,
     shape:"rect", filled:true, stroke:0.008, corner:0
   },o);
 }
@@ -713,6 +713,7 @@ function defaultDoc(){
                       {first:"",last:"",dept:""}],
     sheet:{ order:"pairs" },
     lbImage:"embed",
+    bedOrigin:"bl",                 // where the machine's 0,0 sits: bl or tl
     textOut:"outline",              // outline = traced geometry, live = LightBurn text
     lbTextNudge:0,
     fixture:{ rows:2, cols:3, pitchX:1.75, pitchY:2.40,
@@ -795,6 +796,7 @@ function migrateDoc(d){
   if(!d.sheet.order) d.sheet.order = "pairs";
   if(!d.lbImage) d.lbImage = "embed";
   if(!d.textOut) d.textOut = "outline";
+  if(!d.bedOrigin) d.bedOrigin = "bl";
   if(d.lbTextNudge === undefined) d.lbTextNudge = 0;
   (d.faces||[]).forEach(f=>(f.els||[]).forEach(el=>{
     if(el.type!=="image") return;
@@ -828,6 +830,7 @@ function migrateDoc(d){
     if(!Array.isArray(m.lenses) || !m.lenses.length) m.lenses = [m.lens||110];
   });
   if(!Array.isArray(d.materials) || !d.materials.length) d.materials = seedMaterials(d.machineId);
+  (d.faces||[]).forEach(f=>(f.els||[]).forEach(el=>{ if(el.output===undefined) el.output = true; }));
   d.materials.forEach(m=>{ if(!m.id) m.id = uid("mat_"); if(m.fill===undefined) m.fill="scan";
                            if(m.passes===undefined) m.passes=1; if(m.pulse===undefined) m.pulse=0; });
   d.laser = d.laser || {};
@@ -866,11 +869,16 @@ function boxOf(el){
 }
 function setBox(el, b, noClamp){
   const s = safeRect();
-  let w = clamp(b.w, 0.02, s.w), h = clamp(b.h, 0.005, s.h);
+  /* Something that only records an existing stamp is allowed to sit outside the
+     safe area — the padding rule exists to protect what we mark, not what's
+     already there. It still has to stay on the stock. */
+  const lim = (el && el.output === false)
+    ? { x:0, y:0, w:doc.label.w, h:doc.label.h } : s;
+  let w = clamp(b.w, 0.02, lim.w), h = clamp(b.h, 0.005, lim.h);
   let x = b.x, y = b.y;
   if(!noClamp){
-    x = clamp(x, s.x, s.x + s.w - w);
-    y = clamp(y, s.y, s.y + s.h - h);
+    x = clamp(x, lim.x, lim.x + lim.w - w);
+    y = clamp(y, lim.y, lim.y + lim.h - h);
   }
   const {fx,fy} = anchorF(el.anchor);
   el.w = w; el.h = h;
@@ -1026,6 +1034,7 @@ function fitInto(box, ar){                 // ar = w/h of the content
 function elPrims(el, ctx){
   if(el.visible === false) return [];
   const box = boxOf(el);
+  const ref = el.output === false;
   const rc = [box.x+box.w/2, box.y+box.h/2];
   const rot = el.rot||0;
   const out = [];
@@ -1076,6 +1085,7 @@ function elPrims(el, ctx){
                                 bmp:el.bmp, rot, rc });
     else out.push({ t:"ph", x:box.x, y:box.y, w:box.w, h:box.h, label:el.name||"GRAPHIC" });
   }
+  if(ref) out.forEach(p => { p.noOut = true; });
   return out;
 }
 
@@ -1110,7 +1120,8 @@ function rotatePrims(prims, C, deg){
   });
 }
 function facePrims2(f){
-  let prims = doc.textOut==="outline" ? outlineText(f.prims) : f.prims;
+  const printable = f.prims.filter(p => !p.noOut);
+  let prims = doc.textOut==="outline" ? outlineText(printable) : printable;
   const deg = f.cell && f.cell.rot;
   if(deg) prims = rotatePrims(prims, [doc.label.w/2, doc.label.h/2], deg);
   return prims;
@@ -1119,6 +1130,10 @@ function facePrims2(f){
 /* --------------------------------------------------------- SVG serialiser --- */
 function primSvg(p, ox, oy, k, opt){
   const X = v => r3((v+ox)*k), Y = v => r3((v+oy)*k);
+  if(p.noOut){
+    if(opt.forExport) return "";                 // never reaches the laser
+    return refSvg(p, X, Y, k, opt);
+  }
   const rot = p.rot ? ` transform="rotate(${r3(p.rot)} ${X(p.rc[0])} ${Y(p.rc[1])})"` : "";
   const ink = opt.ink || "#111111";
   if(p.t==="ph"){
@@ -1194,6 +1209,17 @@ function fieldRect(){
   return { x:x0, y:y0,
            w: Math.max(...xs)+hw+m-x0, h: Math.max(...ys)+hh+m-y0 };
 }
+/* Internally the bed is measured downward from its top-left, because that is
+   how SVG and the editor work. The machine is usually zeroed at the bottom-left,
+   so every bed coordinate the user sees or types goes through here. */
+function bedFlipped(){ return doc.bedOrigin !== "tl"; }
+function toBedY(yDownInches){
+  return bedFlipped() ? fieldRect().h - yDownInches : yDownInches;
+}
+function fromBedY(bedYInches){
+  return bedFlipped() ? fieldRect().h - bedYInches : bedYInches;
+}
+
 function centerArray(){
   const f = doc.fixture, fr = fieldRect();
   const span = (rc,pitch) => (Math.max(1,Math.round(rc))-1)*pitch;
@@ -1232,6 +1258,32 @@ function allFaceCount(){
   const o = doc.sheet.order;
   const per = (o==="pairs"||o==="grouped") ? doc.faces.length : 1;
   return doc.roster.length * per;
+}
+
+/* Reference geometry: shown, never marked. Drawn as a dashed ghost so it can't
+   be mistaken for artwork. */
+function refSvg(p, X, Y, k, opt){
+  const col = opt.ref || "#A855C7";
+  const dash = ` stroke="${col}" stroke-width="${r3(0.006*k)}" fill="none"`
+             + ` stroke-dasharray="${r3(0.022*k)} ${r3(0.014*k)}"`;
+  const rot = p.rot ? ` transform="rotate(${r3(p.rot)} ${X(p.rc[0])} ${Y(p.rc[1])})"` : "";
+  if(p.t==="text"){
+    const ls = p.track ? ` letter-spacing="${r3(p.fs*p.track/1000*k)}"` : "";
+    return `<text x="${X(p.x)}" y="${Y(p.y)}" font-family="${esc(p.font)}, Arial, sans-serif"`
+      + ` font-size="${r3(p.fs*k)}" font-weight="${p.bold?700:400}"`
+      + (p.italic?` font-style="italic"`:"") + ls
+      + ` fill="${col}" fill-opacity="0.45" xml:space="preserve"${rot}>${esc(p.str)}</text>`;
+  }
+  if(p.t==="rect")
+    return `<rect x="${X(p.x)}" y="${Y(p.y)}" width="${r3(p.w*k)}" height="${r3(p.h*k)}"`
+      + ` rx="${r3((p.rx||0)*k)}"${dash}${rot}/>`;
+  if(p.t==="poly"){
+    const d = p.rings.map(r=>"M"+r.map(v=>X(v[0])+","+Y(v[1])).join("L")+"Z").join("");
+    return `<path d="${d}"${dash}/>`;
+  }
+  if(p.t==="img" || p.t==="ph")
+    return `<rect x="${X(p.x)}" y="${Y(p.y)}" width="${r3(p.w*k)}" height="${r3(p.h*k)}"${dash}${rot}/>`;
+  return "";
 }
 
 /* ---------------------------------------------------------------- sheet --- */
@@ -1418,26 +1470,33 @@ function sheetBounds(){
   });
   if(x0>x1) return null;
   const w=(x1-x0)*MM, h=(y1-y0)*MM;
+  const cyDown = (y0+y1)/2;
   return { w, h,
            cx: (x0+x1)/2*MM,
-           cy: fr.h*MM - (y0+y1)/2*MM,     // LightBurn measures Y upward
-           top: fr.h*MM - y0*MM, bottom: fr.h*MM - y1*MM,
+           cy: toBedY(cyDown)*MM,          // as the machine reports it
+           cyDown,
+           top: toBedY(y0)*MM, bottom: toBedY(y1)*MM,
            left: x0*MM, right: x1*MM };
 }
-/* shift the whole array so the marked area centres on a LightBurn coordinate */
-function placeArrayAt(lbX, lbY){
+/* shift the whole array so the marked area centres on a machine coordinate */
+function placeArrayAt(bedX, bedY){
   const b = sheetBounds(); if(!b) return;
-  doc.fixture.originX += (lbX - b.cx)/MM;
-  doc.fixture.originY += (b.cy - lbY)/MM;
+  doc.fixture.originX += (bedX - b.cx)/MM;
+  doc.fixture.originY += fromBedY(bedY/MM) - b.cyDown;
 }
 
 /* ------------------------------------------------------------ fit checker --- */
+function refCount(){
+  let n = 0;
+  doc.faces.forEach(f => f.els.forEach(e => { if(e.output === false && e.visible !== false) n++; }));
+  return n;
+}
 function fitIssues(){
   const s = safeRect(), out = [];
   const t = 0.002;
   doc.faces.forEach(f=>{
     f.els.forEach(el=>{
-      if(el.visible===false) return;
+      if(el.visible===false || el.output===false) return;
       elPrims(el, rosterCtx(0)).forEach(p=>{
         let x0,y0,x1,y1;
         if(p.t==="text"){ x0=p.x; x1=p.x+p.w; y0=p.y-p.cap; y1=p.y + (/[gjpqyQ,;]/.test(p.str)?p.cap*0.22:0); }
@@ -1557,7 +1616,7 @@ function drawStage(){
     + ` fill="none" stroke="#D8452E" stroke-width="1" stroke-dasharray="4 3" opacity=".65" vector-effect="non-scaling-stroke"/>`;
 
   /* --- artwork --- */
-  const opt = { forExport:false, ink:"#14181F", knock:"var(--paper)", guide:"#A8A49A" };
+  const opt = { forExport:false, ink:"#14181F", knock:"var(--paper)", guide:"#A8A49A", ref:"#A855C7" };
   const ctx = rosterCtx(ui.previewIdx);
   s += `<g clip-path="url(#lblclip)">`;
   face().els.forEach(el=>{ elPrims(el, ctx).forEach(p=>{ s += primSvg(p, 0, 0, 1, opt); }); });
@@ -1568,7 +1627,8 @@ function drawStage(){
     const b = boxOf(el), c=[b.x+b.w/2,b.y+b.h/2], rot=el.rot||0;
     const tr = rot?` transform="rotate(${r3(rot)} ${r3(c[0])} ${r3(c[1])})"`:"";
     s += `<rect x="${r3(b.x)}" y="${r3(b.y)}" width="${r3(b.w)}" height="${r3(b.h)}"`
-      + ` fill="none" stroke="var(--cyan)" stroke-width="1.4" vector-effect="non-scaling-stroke"${tr}/>`;
+      + ` fill="none" stroke="${el.output===false?"#A855C7":"var(--cyan)"}" stroke-width="1.4"`
+      + ` vector-effect="non-scaling-stroke"${tr}/>`;
   });
   const one = ui.sel.length===1 ? firstSel() : null;
   if(one && !one.locked){
@@ -1634,7 +1694,7 @@ function drawFixture(){
     s += g;
   }
 
-  const opt = { forExport:false, ink:"#14181F", knock:"var(--paper)", guide:"#A8A49A" };
+  const opt = { forExport:false, ink:"#14181F", knock:"var(--paper)", guide:"#A8A49A", ref:"#A855C7" };
 
   fixtureCells().forEach(cell=>{
     const cx = cell.x - fr.x, cy = cell.y - fr.y;
@@ -1718,7 +1778,7 @@ function drawFixture(){
     }
   }
 
-  if(ui.showRule) s += drawRule(v, S, fr);
+  if(ui.showRule) s += drawRule(v, S, fr, bedFlipped());
 
   stage.innerHTML =
     `<defs><clipPath id="fxclip"><rect x="0" y="0" width="${r3(L.w)}" height="${r3(L.h)}" rx="${r3(L.corner)}"/></clipPath></defs>` + s;
@@ -1753,7 +1813,7 @@ function hitCell(w){
   return null;
 }
 
-function drawRule(v, S, fr){
+function drawRule(v, S, fr, flipY){
   const L = fr ? {w:fr.w, h:fr.h} : doc.label;
   const px = n=>n/S;
   const inMode = doc.units==="in";
@@ -1778,7 +1838,7 @@ function drawRule(v, S, fr){
   s += `<line x1="${r3(x0)}" y1="0" x2="${r3(x0)}" y2="${r3(L.h)}" stroke="#7E8DA4" stroke-width="1.2" vector-effect="non-scaling-stroke"/>`;
   const m = Math.floor(L.h/div + 1e-6);
   for(let i=0;i<=m;i++){
-    const y = i*div;
+    const y = flipY ? (L.h - i*div) : i*div;
     const maj = i%majEvery===0, mid = i%midEvery===0;
     const len = maj?th:mid?tm:ts;
     if(!maj && !mid && div*S < 3.5) continue;
@@ -2065,12 +2125,14 @@ document.addEventListener("keydown", ev=>{
 });
 
 function showCellCoord(x, y){
+  const by = toBedY(y);
   $("stCoord").textContent =
-    `centre ${U.fmt(x)}, ${U.fmt(y)} ${U.label()}   ·   ${r3(x*MM)}, ${r3(y*MM)} mm`;
+    `centre ${U.fmt(x)}, ${U.fmt(by)} ${U.label()}   ·   ${r3(x*MM)}, ${r3(by*MM)} mm from `
+    + (bedFlipped() ? "bottom-left" : "top-left");
 }
 function showCoord(w){
   if(ui.stageMode==="fixture"){
-    $("stCoord").textContent = `${U.fmt(w.x)}, ${U.fmt(w.y)} ${U.label()} on the bed`;
+    $("stCoord").textContent = `${U.fmt(w.x)}, ${U.fmt(toBedY(w.y))} ${U.label()} on the bed`;
     return;
   }
   const el = firstSel();
@@ -2609,6 +2671,12 @@ function fLen(label, path, opt){
     <input type="number" step="${U.step()}" ${opt&&opt.min!==undefined?`min="${opt.min}"`:""}
       value="${U.toDisp(v||0).toFixed(doc.units==="in"?3:2)}" data-bind="${path}" data-kind="len"></label>`;
 }
+function fBedY(label, path){
+  const v = toBedY(getByPath(path)||0);
+  return `<label class="fld"><span>${label} (${U.label()})</span>
+    <input type="number" step="${U.step()}"
+      value="${U.toDisp(v).toFixed(doc.units==="in"?3:2)}" data-bind="${path}" data-kind="bedy"></label>`;
+}
 function fNum(label, path, step, min, max){
   return `<label class="fld"><span>${label}</span>
     <input type="number" step="${step||1}" ${min!==undefined?`min="${min}"`:""} ${max!==undefined?`max="${max}"`:""}
@@ -2635,7 +2703,8 @@ function fChk(label, path){
     data-bind="${path}" data-kind="bool"><span>${label}</span></label>`;
 }
 function fSeg(label, path, opts){
-  const cur = String(getByPath(path));
+  const raw = getByPath(path);
+  const cur = String(raw === undefined ? "" : raw);
   return `<label class="fld"><span>${label}</span><div class="seg" data-seg="${path}">`
     + opts.map(([v,t])=>`<button type="button" data-v="${esc(v)}" aria-pressed="${String(v)===cur}">${esc(t)}</button>`).join("")
     + `</div></label>`;
@@ -2692,6 +2761,12 @@ function panelProps(){
   let s = `<section class="sec"><h3>${esc(el.type)} <span class="tag">${esc(el.id.slice(2,7))}</span></h3><div class="body">`;
   s += `<div class="row">${fText("Name","el.name")}</div>`;
   s += `<div class="row c2">${fChk("Visible","el.visible")}${fChk("Locked","el.locked")}</div>`;
+  s += `<div class="row">${fSeg("Output","el.output",[[true,"Mark this"],[false,"Reference only"]])}</div>`;
+  s += el.output===false
+    ? `<div class="callout">Reference only — drawn here, never sent to the laser. Use it to stand in for
+        a serial number, a logo or a hole that is already on the lock, and lay the real marks around it.
+        Reference items may sit outside the padding line.</div>`
+    : "";
   s += `</div></section>`;
 
   /* position */
@@ -2886,7 +2961,7 @@ function panelFixture(){
     <div class="row c2">${fLen("Pitch X — centre to centre","doc.fixture.pitchX")}
       ${fLen("Pitch Y — centre to centre","doc.fixture.pitchY")}</div>
     <div class="row c2">${fLen("First centre X","doc.fixture.originX")}
-      ${fLen("First centre Y","doc.fixture.originY")}</div>
+      ${fBedY("First centre Y","doc.fixture.originY")}</div>
     <div class="row c2">${fLen("Stagger odd rows","doc.fixture.stagger")}
       ${fSel("Fill order","doc.fixture.order",[["row","Rows, left to right"],
         ["serp","Rows, snaking"],["col","Columns, top to bottom"]])}</div>
@@ -2901,6 +2976,10 @@ function panelFixture(){
   <section class="sec"><h3>Bed</h3><div class="body">
     <div class="row">${fSel("Marking field","doc.fixture.field",[[110/MM,"110 mm lens — 110 × 110"],
       [150/MM,"150 mm lens — 150 × 150"],[0,"No limit — size to the array"]],"num")}</div>
+    <div class="row">${fSeg("Machine zero","doc.bedOrigin",
+      [["bl","Bottom left"],["tl","Top left"]])}</div>
+    <p class="hint" style="margin-top:0">Match this to your controller so the numbers here read the same
+      as the ones in LightBurn. It only changes what is displayed — the exported file is unaffected.</p>
     <div class="readout">
       <b>Bed area</b><span>${U.fmt(fr.w,2)} × ${U.fmt(fr.h,2)} ${U.label()}</span>
       <b>Cells</b><span>${Math.max(1,Math.round(F.rows))*Math.max(1,Math.round(F.cols))}</span>
@@ -2914,6 +2993,7 @@ function panelFixture(){
     ${bounds?`<div class="readout" style="margin-top:9px">
       <b>Marked area X</b><span>${r3(bounds.cx)} mm</span>
       <b>Marked area Y</b><span>${r3(bounds.cy)} mm</span>
+      <b>Measured from</b><span>${bedFlipped()?"bottom left":"top left"}</span>
       <b>Size</b><span>${r3(bounds.w)} × ${r3(bounds.h)} mm</span>
     </div>
     <div class="row c2" style="margin-top:8px">
@@ -2946,8 +3026,8 @@ function panelFixture(){
     ${sel?`
       <div class="readout">
         <b>Centre X</b><span>${U.fmt(selC.x)} ${U.label()}</span>
-        <b>Centre Y</b><span>${U.fmt(selC.y)} ${U.label()}</span>
-        <b>In millimetres</b><span>${r3(selC.x*MM)}, ${r3(selC.y*MM)}</span>
+        <b>Centre Y</b><span>${U.fmt(toBedY(selC.y))} ${U.label()}</span>
+        <b>In millimetres</b><span>${r3(selC.x*MM)}, ${r3(toBedY(selC.y)*MM)}</span>
         <b>Status</b><span>${doc.fixture.skipped[ui.fixSel]?"skipped":doc.fixture.moved[ui.fixSel]?"moved":"on pitch"}</span>
       </div>
       <div class="row" style="margin-top:8px"><label class="fld"><span>Rotation in the pocket</span>
@@ -3142,6 +3222,8 @@ function panelExport(){
         ${doc.textOut==="outline"?"outlines":"live text"}</span>
       <b>Build</b><span>${BUILD}</span>
     </div>
+    ${refCount()?`<div class="callout">${refCount()} element${refCount()===1?"":"s"} set to
+      <b>reference only</b> — shown in the editor, not written to either file.</div>`:""}
     ${doc.textOut!=="outline"?`<div class="callout">Live text is positioned by LightBurn, not by this
       app. If a headline sits under its bar or a rule strikes through its line, switch Text to
       <b>Outlines</b> below and export again.</div>`:""}
@@ -3210,7 +3292,7 @@ function panelExport(){
 /* ------------------------------------------------------- panel behaviour --- */
 function bindPanel(root){
   root.querySelectorAll("[data-bind]").forEach(inp=>{
-    const numeric = inp.dataset.kind==="len" || inp.dataset.kind==="num";
+    const numeric = inp.dataset.kind==="len" || inp.dataset.kind==="num" || inp.dataset.kind==="bedy";
     const ev = (inp.type==="checkbox"||inp.tagName==="SELECT") ? "change" : "input";
 
     /* "1." and "-" and "" are on the way to a number, not a number. Committing
@@ -3225,7 +3307,10 @@ function bindPanel(root){
         if(partial(t)){                       // put back what the model actually holds
           const cur = getByPath(inp.dataset.bind);
           inp.value = inp.dataset.kind==="len"
-            ? U.toDisp(cur||0).toFixed(doc.units==="in"?3:2) : (cur ?? 0);
+            ? U.toDisp(cur||0).toFixed(doc.units==="in"?3:2)
+            : inp.dataset.kind==="bedy"
+            ? U.toDisp(toBedY(cur||0)).toFixed(doc.units==="in"?3:2)
+            : (cur ?? 0);
         }
       });
     }
@@ -3239,7 +3324,9 @@ function bindPanel(root){
         if(partial(t)) return;                // wait for the rest of the number
         const n = parseFloat(t);
         if(!isFinite(n)) return;
-        v = kind==="len" ? U.fromDisp(n) : n;
+        v = kind==="len" ? U.fromDisp(n)
+          : kind==="bedy" ? fromBedY(U.fromDisp(n))
+          : n;
       }
       else v = inp.value;
       if(path.startsWith("ui.")){
@@ -3264,10 +3351,13 @@ function bindPanel(root){
   root.querySelectorAll("[data-seg]").forEach(seg=>{
     seg.addEventListener("click", async e=>{
       const b = e.target.closest("button[data-v]"); if(!b) return;
-      const path = seg.dataset.seg, v = b.dataset.v;
+      const path = seg.dataset.seg;
+      let v = b.dataset.v;
+      if(v==="true") v = true; else if(v==="false") v = false;
       [...seg.children].forEach(c=>c.setAttribute("aria-pressed", c===b));
       if(path==="doc.units"){ doc.units = v; renderRail(); drawStage(); updateStatus(); return; }
       setByPath(path, v);
+      if(path==="el.output"){ const e = firstSel(); if(e) setBox(e, boxOf(e)); renderRail(true); }
       await afterEdit(path);
     });
   });
@@ -3336,6 +3426,7 @@ async function afterEdit(path){
   }
   if(path==="doc.laser.materialId"){ doc.laser.trim=0; doc.laser.manual=false; renderRail(); }
   if(path==="doc.textOut") renderRail(true);
+  if(path==="doc.bedOrigin"){ drawStage(); renderRail(true); }
   if(path.startsWith("doc.machines")||path.startsWith("doc.materials")) renderRail();
   if(path.startsWith("doc.fixture")){
     doc.fixture.batch = clamp(doc.fixture.batch||0, 0, batchCount()-1);
@@ -3640,12 +3731,15 @@ const LAYER_ICON = {
 };
 function renderLayers(){
   const els = face().els;
-  $("elCount").textContent = els.length;
+  const refs = els.filter(e=>e.output===false).length;
+  $("elCount").textContent = refs ? (els.length + " · " + refs + " ref") : els.length;
   $("layers").innerHTML = els.length ? els.slice().reverse().map(el=>`
     <div class="layer" data-id="${el.id}" aria-selected="${ui.sel.includes(el.id)}">
       <svg class="ic" viewBox="0 0 24 24">${LAYER_ICON[el.type]||""}</svg>
       <span class="nm">${esc(el.name)}</span>
       <button class="mini" data-vis="${el.id}" data-off="${el.visible?0:1}" title="Show / hide">${el.visible?"◉":"○"}</button>
+      <button class="mini" data-out="${el.id}" data-off="${el.output===false?1:0}"
+        title="${el.output===false?"Reference only — will not be marked":"Will be marked"}">${el.output===false?"⊘":"◆"}</button>
       <button class="mini" data-lk="${el.id}" data-off="${el.locked?0:1}" title="Lock">${el.locked?"▣":"▢"}</button>
       <button class="mini" data-up="${el.id}" title="Bring forward">▲</button>
       <button class="mini" data-dn="${el.id}" title="Send back">▼</button>
@@ -3661,6 +3755,11 @@ function renderLayers(){
   const els2 = face().els;
   $("layers").querySelectorAll("[data-vis]").forEach(b=>b.addEventListener("click",()=>{
     const el = els2.find(e=>e.id===b.dataset.vis); el.visible = !el.visible; buildAll(); }));
+  $("layers").querySelectorAll("[data-out]").forEach(b=>b.addEventListener("click",()=>{
+    const el = els2.find(e=>e.id===b.dataset.out);
+    el.output = (el.output === false);
+    setBox(el, boxOf(el));
+    buildAll(); }));
   $("layers").querySelectorAll("[data-lk]").forEach(b=>b.addEventListener("click",()=>{
     const el = els2.find(e=>e.id===b.dataset.lk); el.locked = !el.locked; buildAll(); }));
   $("layers").querySelectorAll("[data-up]").forEach(b=>b.addEventListener("click",()=>move(b.dataset.up, 1)));
@@ -3929,12 +4028,12 @@ const FB_CDN = "https://www.gstatic.com/firebasejs/" + FB_VERSION;
    remember it in the browser. A Firebase web apiKey is an identifier, not a
    secret — access is controlled by your Firestore rules. */
 const FIREBASE_BUILTIN = {
-  apiKey: "AIzaSyB_XxddCEQX3X9yKsWMPOyhzPiPCNPRu_c",
-  authDomain: "markbench-e351d.firebaseapp.com",
-  projectId: "markbench-e351d",
-  appId: "1:1032442534462:web:9d0c949d7584495f4acf6f",
-  storageBucket: "markbench-e351d.firebasestorage.app",
-  messagingSenderId: "1032442534462",
+  apiKey: "",
+  authDomain: "",
+  projectId: "",
+  appId: "",
+  storageBucket: "",
+  messagingSenderId: "",
   workspace: "shop",
   authMode: "anonymous"        // "anonymous" | "google"
 };

@@ -208,6 +208,15 @@ position when the label changes size.
 
 **Element** — per-element properties. Text auto-shrinks or wraps to fit.
 
+Every element has an **Output** setting: *Mark this* or *Reference only*.
+Reference elements are drawn in the editor as a dashed violet ghost and are
+never written to the `.lbrn` or the `.svg`. Use them to stand in for whatever
+is already on the lock — a stamped serial number, a cast logo, a hole — and lay
+the real marks around it. Because they record what exists rather than what you
+are adding, they are allowed outside the padding line and never raise a
+safe-area warning. There's a per-element toggle in the Elements list too, and
+the Export tab reports how many are held back so nothing goes missing quietly.
+
 Graphics have two output modes:
 
 - **Vector outlines** (the default). The image is thresholded to 1-bit and
@@ -252,6 +261,11 @@ into runs. Step through them, or use **All runs** in Export to write one
 
 Exports are referenced to the marking field, not to the artwork, so the
 coordinates in LightBurn line up with the physical fixture.
+
+**Machine zero** in the Bed section sets whether bed coordinates read from the
+bottom-left (the usual fibre setup, and the default) or the top-left. It changes
+what the panel, ruler and status bar display — the exported file is written
+Y-up either way and does not change.
 
 **Machine** — a library of the machines you own. Name, wattage, source type,
 lens field, and hard limits for speed, power, frequency and line interval.
