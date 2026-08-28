@@ -579,7 +579,7 @@ input[type=color]{width:100%;height:30px;padding:2px;background:var(--chrome-2);
    ========================================================================== */
 "use strict";
 
-const BUILD = "2026.08.26-c";
+const BUILD = "2026.08.26-d";
 const MM   = 25.4;
 const CAPR = 0.716;              // cap height / em for the sans faces we ship with
 const FONTS = ["Arial","Arial Black","Arial Narrow","Verdana","Tahoma",
@@ -1273,8 +1273,10 @@ function sheetFaces(batchIdx){
 
 function exportStamp(){
   const n = doc.textOut==="outline" ? "outlines" : "live LightBurn text";
-  return `Markbench ${BUILD} · text as ${n} · ${activeMachine().name} · `
-       + `${activeMaterial().name} · ${new Date().toISOString().slice(0,16).replace("T"," ")}`;
+  const ascii = t => String(t).replace(/[\u2010-\u2015]/g,"-").replace(/[\u00b7\u2022]/g,"|")
+                              .replace(/[^\x20-\x7E]/g,"");
+  return ascii(`Markbench ${BUILD} | text as ${n} | ${activeMachine().name} | `
+       + `${activeMaterial().name} | ${new Date().toISOString().slice(0,16).replace("T"," ")}`);
 }
 
 function exportSVG(){
@@ -1370,10 +1372,8 @@ function exportLBRN(){
   const sh = sheetFaces(), H = sh.h*MM, p = laserEffective();
   const stamp = exportStamp();
   let s = `<?xml version="1.0" encoding="UTF-8"?>\n`
-    + `<!-- ${esc(stamp)} -->\n`
     + `<LightBurnProject AppVersion="1.7.00" DeviceName="${esc(activeMachine().name)}" FormatVersion="1" `
-    + `MaterialHeight="0" MirrorX="False" MirrorY="False">\n`
-    + `  <Notes ShowOnLoad="0" Notes="${esc(stamp)}"/>\n`;
+    + `MaterialHeight="0" MirrorX="False" MirrorY="False">\n`;
   s += lbCut(0, activeMaterial().name.slice(0,30), p, doc.laser.fill==="cut", true);
   s += lbCut(1, "Guide — no output", {power:10,speed:1000,freq:30,passes:1,interval:0.05}, true, false);
   sh.faces.forEach(f=>{
@@ -1381,7 +1381,7 @@ function exportLBRN(){
     facePrims2(f).forEach(q=> s += primLbrn(q, f.ox, f.oy, H, "      "));
     s += `    </Children>\n  </Shape>\n`;
   });
-  return s + `</LightBurnProject>\n`;
+  return s + `</LightBurnProject>\n<!-- ${esc(stamp)} -->\n`;
 }
 
 /* Overall extents of everything that will be marked, reported the way
