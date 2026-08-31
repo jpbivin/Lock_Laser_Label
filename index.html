@@ -414,7 +414,8 @@ input[type=color]{width:100%;height:30px;padding:2px;background:var(--chrome-2);
   font-family:var(--mono);font-size:11px;line-height:1.1;
   display:flex;align-items:center;justify-content:center;gap:2px;padding:2px;
 }
-.cellbtn b{color:var(--accent);font-weight:700}
+.cellbtn b{color:var(--accent);font-weight:700;font-size:16px}
+.cellbtn.empty{color:var(--text-3)}
 .cellbtn:hover{border-color:var(--line-2);color:var(--text)}
 .cellbtn.sel{border-color:var(--cyan);box-shadow:inset 0 0 0 1px var(--cyan);color:var(--text)}
 .cellbtn.off{opacity:.4;background:transparent}
@@ -594,7 +595,7 @@ input[type=color]{width:100%;height:30px;padding:2px;background:var(--chrome-2);
    ========================================================================== */
 "use strict";
 
-const BUILD = "2026.08.28-a";
+const BUILD = "2026.08.28-b";
 const MM   = 25.4;
 const CAPR = 0.716;              // cap height / em for the sans faces we ship with
 const FONTS = ["Arial","Arial Black","Arial Narrow","Verdana","Tahoma",
@@ -861,6 +862,18 @@ function migrateDoc(d){
   const f = d.fixture;
   f.moved = f.moved || {}; f.skipped = f.skipped || {}; f.rot = f.rot || {};
   f.assign = f.assign || {}; if(f.manual === undefined) f.manual = false;
+  Object.keys(f.assign).forEach(k=>{                 // was {slot, face}; now just the side
+    const v = f.assign[k];
+    if(v && typeof v === "object"){
+      if(v.face === null || v.face === undefined) delete f.assign[k];
+      else f.assign[k] = v.face;
+    }
+  });
+  Object.keys(f.assign).forEach(k=>{            // an earlier build stored {slot, face}
+    const v = f.assign[k];
+    if(v && typeof v === "object") f.assign[k] = (v.face===null||v.face===undefined) ? undefined : v.face;
+    if(f.assign[k] === undefined) delete f.assign[k];
+  });
   if(f.batch === undefined) f.batch = 0;
   if(f.stagger === undefined) f.stagger = 0;
   if(f.field === undefined) f.field = 110/MM;
@@ -1323,24 +1336,29 @@ function sheetFaces(batchIdx){
              w:fr.w, h:fr.h, field:fr };
   };
 
-  /* ---- hand assignment: each pocket names a slot and a face, and the
-     pattern repeats for every load of locks ---- */
+  /* ---- hand assignment: each pocket simply names a side ----
+     Cells carrying the same side take locks in fill order, so "left column
+     marks side 1, right column marks side 2" gives lock 1 both its sides. ---- */
   if(F.manual){
     const seats = cells
-      .map(c => ({ cell:c, a:(F.assign||{})[cellKey(c.r,c.c)] }))
-      .filter(e => e.a && e.a.face !== null && e.a.face !== undefined && doc.faces[e.a.face]);
-    const slots = seats.length ? Math.max(...seats.map(e => e.a.slot||0)) + 1 : 1;
+      .map(c => ({ cell:c, face:(F.assign||{})[cellKey(c.r,c.c)] }))
+      .filter(e => e.face !== null && e.face !== undefined && doc.faces[e.face]);
+
+    const seen = {};
+    seats.forEach(e => { e.slot = (seen[e.face] = (seen[e.face]===undefined ? 0 : seen[e.face]+1)); });
+
+    const slots = Math.max(1, ...Object.values(seen).map(v=>v+1));
     const batches = Math.max(1, Math.ceil(doc.roster.length / slots));
     const b = clamp(batchIdx===undefined ? (F.batch||0) : batchIdx, 0, batches-1);
+
     const out = [];
     seats.forEach(e=>{
-      const ri = b*slots + (e.a.slot||0);
+      const ri = b*slots + e.slot;
       if(ri >= doc.roster.length) return;
-      const f = make(e.a.face, ri);
+      const f = make(e.face, ri);
       if(f){ f.cell = e.cell; out.push(f); }
     });
-    const perLock = new Set(seats.map(e=>e.a.face)).size || 1;
-    return place(out, batches, b, seats.length, doc.roster.length * perLock);
+    return place(out, batches, b, seats.length, doc.roster.length * Object.keys(seen).length);
   }
 
   /* ---- automatic: walk the roster in the chosen face order ---- */
@@ -1363,30 +1381,38 @@ function sheetFaces(batchIdx){
   return place(slice, batches, b, cap, all.length);
 }
 
-/* Seed the assignment map from the automatic layout, so hand editing starts
-   from something sensible rather than an empty grid. */
+/* Copy whatever the automatic layout is doing into the grid, so hand editing
+   starts from something familiar. */
 function seedAssignment(){
   const F = doc.fixture;
-  const cells = fixtureCells().filter(c=>!c.skip);
   const nf = Math.max(1, doc.faces.length);
   F.assign = {};
-  cells.forEach((c,i)=>{
-    F.assign[cellKey(c.r,c.c)] = { slot: Math.floor(i/nf), face: i % nf };
+  fixtureCells().filter(c=>!c.skip).forEach((c,i)=>{
+    F.assign[cellKey(c.r,c.c)] = i % nf;
   });
 }
 function assignByColumn(){
-  const F = doc.fixture, cols = Math.max(1, Math.round(F.cols));
+  const F = doc.fixture, nf = Math.max(1, doc.faces.length);
   F.assign = {};
-  fixtureCells().filter(c=>!c.skip).forEach(c=>{
-    F.assign[cellKey(c.r,c.c)] = { slot:c.r, face: c.c % Math.max(1,doc.faces.length) };
-  });
+  fixtureCells().filter(c=>!c.skip).forEach(c=>{ F.assign[cellKey(c.r,c.c)] = c.c % nf; });
 }
 function assignByRow(){
+  const F = doc.fixture, nf = Math.max(1, doc.faces.length);
+  F.assign = {};
+  fixtureCells().filter(c=>!c.skip).forEach(c=>{ F.assign[cellKey(c.r,c.c)] = c.r % nf; });
+}
+function assignAll(fi){
   const F = doc.fixture;
   F.assign = {};
-  fixtureCells().filter(c=>!c.skip).forEach(c=>{
-    F.assign[cellKey(c.r,c.c)] = { slot:c.c, face: c.r % Math.max(1,doc.faces.length) };
-  });
+  fixtureCells().filter(c=>!c.skip).forEach(c=>{ F.assign[cellKey(c.r,c.c)] = fi; });
+}
+/* one tap moves a pocket to the next side, then to empty */
+function cycleCell(key){
+  const F = doc.fixture, n = doc.faces.length;
+  const cur = F.assign[key];
+  if(cur === null || cur === undefined) F.assign[key] = 0;
+  else if(cur + 1 < n) F.assign[key] = cur + 1;
+  else delete F.assign[key];
 }
 
 function exportStamp(){
@@ -3012,29 +3038,24 @@ function panelBatch(){
 }
 
 /* ---- fixture ---- */
-/* A miniature of the bed: one button per pocket showing which lock slot and
-   which face it marks. Tap to select that cell. */
+/* A miniature of the bed: one button per pocket showing which side it marks.
+   Tap to step to the next side, then to empty. */
 function assignGrid(){
   const F = doc.fixture;
   const rows = Math.max(1, Math.round(F.rows)), cols = Math.max(1, Math.round(F.cols));
-  const shortFace = fi => {
-    const f = doc.faces[fi]; if(!f) return "?";
-    const m = String(f.name).match(/(\d+)\s*$/);
-    return m ? "S"+m[1] : f.name.slice(0,3).toUpperCase();
-  };
   let g = `<div class="cellgrid" style="grid-template-columns:repeat(${cols},minmax(0,1fr))">`;
   for(let r=0;r<rows;r++) for(let c=0;c<cols;c++){
     const k = cellKey(r,c);
     const skipped = !!F.skipped[k];
-    const a = (F.assign||{})[k];
+    const fi = (F.assign||{})[k];
+    const has = fi !== null && fi !== undefined && doc.faces[fi];
     const sel = ui.fixSel===k;
-    const label = skipped ? "—"
-      : (a && a.face!==null && a.face!==undefined)
-        ? `<b>${(a.slot||0)+1}</b>${shortFace(a.face)}`
-        : "·";
+    const label = skipped ? "—" : has ? `<b>${fi+1}</b>` : "·";
+    const title = skipped ? `Row ${r+1}, column ${c+1} — skipped`
+                : has ? `Row ${r+1}, column ${c+1} — ${doc.faces[fi].name}`
+                : `Row ${r+1}, column ${c+1} — empty`;
     g += `<button type="button" class="cellbtn${sel?" sel":""}${skipped?" off":""}"
-      data-cell="${k}" title="Row ${r+1}, column ${c+1}">${label}
-      ${F.rot[k]?`<i>${F.rot[k]}°</i>`:""}</button>`;
+      data-cell="${k}" title="${esc(title)}">${label}${F.rot[k]?`<i>${F.rot[k]}°</i>`:""}</button>`;
   }
   return g + `</div>`;
 }
@@ -3077,6 +3098,7 @@ function panelFixture(){
       <b>Bed area</b><span>${U.fmt(fr.w,2)} × ${U.fmt(fr.h,2)} ${U.label()}</span>
       <b>Cells</b><span>${Math.max(1,Math.round(F.rows))*Math.max(1,Math.round(F.cols))}</span>
       <b>Marks per load</b><span>${sh.capacity}</span>
+      <b>Locks per load</b><span>${Math.max(1, Math.ceil(doc.roster.length/Math.max(1,sh.batches)))}</span>
       <b>Faces needed</b><span>${sh.total}</span>
       <b>Runs</b><span>${sh.batches}</span>
     </div>
@@ -3115,24 +3137,24 @@ function panelFixture(){
     </div>
   </div></section>`:""}
 
-  <section class="sec"><h3>Which face goes where</h3><div class="body">
+  <section class="sec"><h3>Which side goes in which pocket</h3><div class="body">
     <div class="row">${fSeg("Assignment","doc.fixture.manual",
       [[false,"Automatic"],[true,"By pocket"]])}</div>
     ${F.manual ? `
       ${assignGrid()}
-      <p class="hint">Each pocket shows <b>lock slot</b> then face. Slot 1 and slot 2 are the first and
-        second lock of a load, so the pattern repeats for every run. Tap a pocket to change it below.</p>
+      <p class="hint">The number is the side marked in that pocket. Tap to step to the next side,
+        then to empty. Pockets carrying the same side take locks in fill order, so a left column of
+        <b>1</b> and a right column of <b>2</b> gives each lock both its sides.</p>
       <div class="btnrow split" style="margin-top:8px">
-        <button class="btn sm" data-act="asgcol">Face per column</button>
-        <button class="btn sm" data-act="asgrow">Face per row</button>
+        ${doc.faces.map((f,i)=>`<button class="btn sm" data-fillside="${i}">All ${esc(f.name)}</button>`).join("")}
       </div>
       <div class="btnrow split" style="margin-top:6px">
-        <button class="btn sm ghost" data-act="asgseed">Match automatic</button>
-        <button class="btn sm ghost dngr" data-act="asgclear">Empty every pocket</button>
+        <button class="btn sm ghost" data-act="asgcol">Side per column</button>
+        <button class="btn sm ghost" data-act="asgrow">Side per row</button>
+        <button class="btn sm ghost dngr" data-act="asgclear">Empty all</button>
       </div>`
-    : `<p class="hint" style="margin-top:0">Faces are laid out in the order set under Sheet layout, filling
-        pockets in the fill order above. Switch to <b>By pocket</b> to say exactly which face lands where —
-        useful when the fixture holds one lock face up and the next face down.</p>`}
+    : `<p class="hint" style="margin-top:0">Sides are laid out in the order set under Sheet layout.
+        Switch to <b>By pocket</b> to say exactly which side lands where.</p>`}
   </div></section>
 
   <section class="sec"><h3>Cell${sel?` <span class="tag">${sel[0]+1} × ${sel[1]+1}</span>`:""}</h3><div class="body">
@@ -3143,16 +3165,11 @@ function panelFixture(){
         <b>In millimetres</b><span>${r3(selC.x*MM)}, ${r3(toBedY(selC.y)*MM)}</span>
         <b>Status</b><span>${doc.fixture.skipped[ui.fixSel]?"skipped":doc.fixture.moved[ui.fixSel]?"moved":"on pitch"}</span>
       </div>
-      ${F.manual ? `<div class="row c2">
-        <label class="fld"><span>Lock slot</span>
-          <select data-asg="slot">${Array.from({length:Math.max(1,Math.round(F.rows)*Math.round(F.cols))},(_,i)=>
-            `<option value="${i}"${((F.assign[ui.fixSel]||{}).slot||0)===i?" selected":""}>Lock ${i+1} of the load</option>`).join("")}</select></label>
-        <label class="fld"><span>Face</span>
-          <select data-asg="face">
-            <option value=""${(F.assign[ui.fixSel]||{}).face===undefined||(F.assign[ui.fixSel]||{}).face===null?" selected":""}>— leave empty —</option>
-            ${doc.faces.map((f,i)=>`<option value="${i}"${(F.assign[ui.fixSel]||{}).face===i?" selected":""}>${esc(f.name)}</option>`).join("")}
-          </select></label>
-      </div>` : ""}
+      ${F.manual ? `<div class="row"><label class="fld"><span>Side marked here</span>
+        <select data-asg="face">
+          <option value=""${F.assign[ui.fixSel]===undefined||F.assign[ui.fixSel]===null?" selected":""}>— empty —</option>
+          ${doc.faces.map((f,i)=>`<option value="${i}"${F.assign[ui.fixSel]===i?" selected":""}>${esc(f.name)}</option>`).join("")}
+        </select></label></div>` : ""}
       <div class="row" style="margin-top:8px"><label class="fld"><span>Rotation in the pocket</span>
         <div class="seg" data-cellrot>
           ${[0,90,180,270].map(a=>`<button type="button" data-v="${a}"
@@ -3493,17 +3510,20 @@ function bindPanel(root){
     });
   });
   root.querySelectorAll("[data-cell]").forEach(b=>b.addEventListener("click",()=>{
+    const k = b.dataset.cell;
+    if(doc.fixture.skipped[k]) return;
     if(ui.stageMode!=="fixture") setStageMode("fixture");
-    ui.fixSel = b.dataset.cell;
-    drawStage(); renderRail(true);
+    ui.fixSel = k;
+    cycleCell(k);
+    fixtureChanged();
+  }));
+  root.querySelectorAll("[data-fillside]").forEach(b=>b.addEventListener("click",()=>{
+    assignAll(parseInt(b.dataset.fillside)||0); fixtureChanged();
   }));
   root.querySelectorAll("[data-asg]").forEach(sel=>sel.addEventListener("change",()=>{
     if(!ui.fixSel) return;
-    const F = doc.fixture;
-    const cur = Object.assign({slot:0, face:null}, F.assign[ui.fixSel]||{});
-    if(sel.dataset.asg==="slot") cur.slot = parseInt(sel.value)||0;
-    else cur.face = sel.value==="" ? null : parseInt(sel.value);
-    F.assign[ui.fixSel] = cur;
+    if(sel.value==="") delete doc.fixture.assign[ui.fixSel];
+    else doc.fixture.assign[ui.fixSel] = parseInt(sel.value);
     fixtureChanged();
   }));
   const cr = root.querySelector("[data-cellrot]");
@@ -3636,9 +3656,8 @@ async function action(a){
     case "fxsnapback": if(ui.fixSel) delete doc.fixture.moved[ui.fixSel]; fixtureChanged(); break;
     case "fxclearmoved": doc.fixture.moved = {}; fixtureChanged(); break;
     case "fxclearrot": doc.fixture.rot = {}; fixtureChanged(); break;
-    case "asgseed": seedAssignment(); fixtureChanged(); toast("Copied the automatic layout"); break;
-    case "asgcol": assignByColumn(); fixtureChanged(); toast("One face per column"); break;
-    case "asgrow": assignByRow(); fixtureChanged(); toast("One face per row"); break;
+    case "asgcol": assignByColumn(); fixtureChanged(); break;
+    case "asgrow": assignByRow(); fixtureChanged(); break;
     case "asgclear": doc.fixture.assign = {}; fixtureChanged(); break;
     case "fxflipodd": {
       const F = doc.fixture, rows = Math.max(1, Math.round(F.rows));
@@ -4173,12 +4192,12 @@ const FB_CDN = "https://www.gstatic.com/firebasejs/" + FB_VERSION;
    remember it in the browser. A Firebase web apiKey is an identifier, not a
    secret — access is controlled by your Firestore rules. */
 const FIREBASE_BUILTIN = {
-  apiKey: "AIzaSyB_XxddCEQX3X9yKsWMPOyhzPiPCNPRu_c",
-  authDomain: "markbench-e351d.firebaseapp.com",
-  projectId: "markbench-e351d",
-  appId: "1:1032442534462:web:9d0c949d7584495f4acf6f",
-  storageBucket: "markbench-e351d.firebasestorage.app",
-  messagingSenderId: "1032442534462",
+  apiKey: "",
+  authDomain: "",
+  projectId: "",
+  appId: "",
+  storageBucket: "",
+  messagingSenderId: "",
   workspace: "shop",
   authMode: "anonymous"        // "anonymous" | "google"
 };
