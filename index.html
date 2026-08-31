@@ -405,6 +405,21 @@ input[type=color]{width:100%;height:30px;padding:2px;background:var(--chrome-2);
   .rrow .d{grid-area:d}.rrow .x{grid-area:x}
 }
 
+/* fixture assignment grid */
+.cellgrid{display:grid;gap:4px;margin-top:8px}
+.cellbtn{
+  position:relative;aspect-ratio:1.1;min-height:38px;
+  border:1px solid var(--line);background:var(--chrome-2);color:var(--text-2);
+  border-radius:var(--r);cursor:pointer;
+  font-family:var(--mono);font-size:11px;line-height:1.1;
+  display:flex;align-items:center;justify-content:center;gap:2px;padding:2px;
+}
+.cellbtn b{color:var(--accent);font-weight:700}
+.cellbtn:hover{border-color:var(--line-2);color:var(--text)}
+.cellbtn.sel{border-color:var(--cyan);box-shadow:inset 0 0 0 1px var(--cyan);color:var(--text)}
+.cellbtn.off{opacity:.4;background:transparent}
+.cellbtn i{position:absolute;right:3px;bottom:2px;font-style:normal;font-size:9px;color:var(--amber)}
+
 /* laser dose ladder */
 .ladder{display:flex;gap:2px;margin:8px 0 4px}
 .ladder div{flex:1;height:20px;border-radius:1px;position:relative}
@@ -579,7 +594,7 @@ input[type=color]{width:100%;height:30px;padding:2px;background:var(--chrome-2);
    ========================================================================== */
 "use strict";
 
-const BUILD = "2026.08.27-b";
+const BUILD = "2026.08.28-a";
 const MM   = 25.4;
 const CAPR = 0.716;              // cap height / em for the sans faces we ship with
 const FONTS = ["Arial","Arial Black","Arial Narrow","Verdana","Tahoma",
@@ -719,7 +734,8 @@ function defaultDoc(){
     fixture:{ rows:2, cols:3, pitchX:1.75, pitchY:2.40,
               originX:0.90, originY:0.85, stagger:0,
               order:"row", field:110/MM, batch:0,
-              moved:{}, skipped:{}, rot:{} },
+              moved:{}, skipped:{}, rot:{},
+              manual:false, assign:{} },
     laser:{ materialId:"anodized", trim:0, manual:false,
             speed:0, power:0, freq:0, interval:0, passes:1, fill:"scan", pulse:0 }
   };
@@ -815,7 +831,8 @@ function migrateDoc(d){
     const rows = Math.max(1, Math.floor(((field>0?field:pitchY*3) + 1e-6) / pitchY)) || 1;
     d.fixture = { rows, cols, pitchX, pitchY,
                   originX: pitchX/2 + 0.1, originY: pitchY/2 + 0.1,
-                  stagger:0, order:"row", field, batch:0, moved:{}, skipped:{}, rot:{} };
+                  stagger:0, order:"row", field, batch:0, moved:{}, skipped:{}, rot:{},
+                  manual:false, assign:{} };
   }
   /* machines + material library arrived after the first releases */
   if(!Array.isArray(d.machines) || !d.machines.length){
@@ -843,6 +860,7 @@ function migrateDoc(d){
 
   const f = d.fixture;
   f.moved = f.moved || {}; f.skipped = f.skipped || {}; f.rot = f.rot || {};
+  f.assign = f.assign || {}; if(f.manual === undefined) f.manual = false;
   if(f.batch === undefined) f.batch = 0;
   if(f.stagger === undefined) f.stagger = 0;
   if(f.field === undefined) f.field = 110/MM;
@@ -1250,10 +1268,7 @@ function fixtureOversize(){
   });
   return out;
 }
-function batchCount(){
-  const cap = fixtureCapacity();
-  return cap ? Math.max(1, Math.ceil(allFaceCount()/cap)) : 1;
-}
+function batchCount(){ return sheetFaces().batches; }
 function allFaceCount(){
   const o = doc.sheet.order;
   const per = (o==="pairs"||o==="grouped") ? doc.faces.length : 1;
@@ -1288,15 +1303,50 @@ function refSvg(p, X, Y, k, opt){
 
 /* ---------------------------------------------------------------- sheet --- */
 function sheetFaces(batchIdx){
+  const F = doc.fixture;
+  const cells = fixtureCells().filter(c=>!c.skip);
+
+  const make = (fi, ri) => {
+    const f = doc.faces[fi]; if(!f) return null;
+    const r = doc.roster[ri] || {};
+    const nm = (r.first||r.last) ? (r.first+" "+r.last).trim() : ("Lock "+(ri+1));
+    return { name:nm+" · "+f.name, short:nm, faceName:f.name, faceIdx:fi, lockIdx:ri,
+             prims:facePrims(f, rosterCtx(ri)) };
+  };
+  const place = (list, batches, b, capacity, total) => {
+    const fr = fieldRect();
+    list.forEach(f=>{
+      f.ox = f.cell.x - doc.label.w/2 - fr.x;
+      f.oy = f.cell.y - doc.label.h/2 - fr.y;
+    });
+    return { faces:list, total, capacity, batches, batch:b,
+             w:fr.w, h:fr.h, field:fr };
+  };
+
+  /* ---- hand assignment: each pocket names a slot and a face, and the
+     pattern repeats for every load of locks ---- */
+  if(F.manual){
+    const seats = cells
+      .map(c => ({ cell:c, a:(F.assign||{})[cellKey(c.r,c.c)] }))
+      .filter(e => e.a && e.a.face !== null && e.a.face !== undefined && doc.faces[e.a.face]);
+    const slots = seats.length ? Math.max(...seats.map(e => e.a.slot||0)) + 1 : 1;
+    const batches = Math.max(1, Math.ceil(doc.roster.length / slots));
+    const b = clamp(batchIdx===undefined ? (F.batch||0) : batchIdx, 0, batches-1);
+    const out = [];
+    seats.forEach(e=>{
+      const ri = b*slots + (e.a.slot||0);
+      if(ri >= doc.roster.length) return;
+      const f = make(e.a.face, ri);
+      if(f){ f.cell = e.cell; out.push(f); }
+    });
+    const perLock = new Set(seats.map(e=>e.a.face)).size || 1;
+    return place(out, batches, b, seats.length, doc.roster.length * perLock);
+  }
+
+  /* ---- automatic: walk the roster in the chosen face order ---- */
   const all = [];
   const order = doc.sheet.order;
-  const push = (fi, ri) => {
-    const f = doc.faces[fi]; if(!f) return;
-    const r = doc.roster[ri]||{};
-    const nm = (r.first||r.last) ? (r.first+" "+r.last).trim() : ("Lock "+(ri+1));
-    all.push({ name:nm+" · "+f.name, short:nm, faceName:f.name,
-               prims:facePrims(f, rosterCtx(ri)) });
-  };
+  const push = (fi, ri) => { const f = make(fi, ri); if(f) all.push(f); };
   if(order==="pairs"){
     doc.roster.forEach((_,ri)=> doc.faces.forEach((_,fi)=> push(fi,ri)));
   } else if(order==="grouped"){
@@ -1305,22 +1355,38 @@ function sheetFaces(batchIdx){
     const fi = parseInt(String(order).replace("face",""))||0;
     doc.roster.forEach((_,ri)=> push(fi,ri));
   }
-
-  const cells = fixtureCells().filter(c=>!c.skip);
   const cap = cells.length || 1;
   const batches = Math.max(1, Math.ceil(all.length/cap));
-  const b = clamp(batchIdx===undefined ? (doc.fixture.batch||0) : batchIdx, 0, batches-1);
+  const b = clamp(batchIdx===undefined ? (F.batch||0) : batchIdx, 0, batches-1);
   const slice = all.slice(b*cap, b*cap + cap);
+  slice.forEach((f,i)=>{ f.cell = cells[i]; });
+  return place(slice, batches, b, cap, all.length);
+}
 
-  const fr = fieldRect();
-  slice.forEach((f,i)=>{
-    const cell = cells[i];
-    f.cell = cell;
-    f.ox = cell.x - doc.label.w/2 - fr.x;
-    f.oy = cell.y - doc.label.h/2 - fr.y;
+/* Seed the assignment map from the automatic layout, so hand editing starts
+   from something sensible rather than an empty grid. */
+function seedAssignment(){
+  const F = doc.fixture;
+  const cells = fixtureCells().filter(c=>!c.skip);
+  const nf = Math.max(1, doc.faces.length);
+  F.assign = {};
+  cells.forEach((c,i)=>{
+    F.assign[cellKey(c.r,c.c)] = { slot: Math.floor(i/nf), face: i % nf };
   });
-  return { faces:slice, total:all.length, capacity:cap, batches, batch:b,
-           w:fr.w, h:fr.h, field:fr };
+}
+function assignByColumn(){
+  const F = doc.fixture, cols = Math.max(1, Math.round(F.cols));
+  F.assign = {};
+  fixtureCells().filter(c=>!c.skip).forEach(c=>{
+    F.assign[cellKey(c.r,c.c)] = { slot:c.r, face: c.c % Math.max(1,doc.faces.length) };
+  });
+}
+function assignByRow(){
+  const F = doc.fixture;
+  F.assign = {};
+  fixtureCells().filter(c=>!c.skip).forEach(c=>{
+    F.assign[cellKey(c.r,c.c)] = { slot:c.c, face: c.r % Math.max(1,doc.faces.length) };
+  });
 }
 
 function exportStamp(){
@@ -2946,6 +3012,33 @@ function panelBatch(){
 }
 
 /* ---- fixture ---- */
+/* A miniature of the bed: one button per pocket showing which lock slot and
+   which face it marks. Tap to select that cell. */
+function assignGrid(){
+  const F = doc.fixture;
+  const rows = Math.max(1, Math.round(F.rows)), cols = Math.max(1, Math.round(F.cols));
+  const shortFace = fi => {
+    const f = doc.faces[fi]; if(!f) return "?";
+    const m = String(f.name).match(/(\d+)\s*$/);
+    return m ? "S"+m[1] : f.name.slice(0,3).toUpperCase();
+  };
+  let g = `<div class="cellgrid" style="grid-template-columns:repeat(${cols},minmax(0,1fr))">`;
+  for(let r=0;r<rows;r++) for(let c=0;c<cols;c++){
+    const k = cellKey(r,c);
+    const skipped = !!F.skipped[k];
+    const a = (F.assign||{})[k];
+    const sel = ui.fixSel===k;
+    const label = skipped ? "—"
+      : (a && a.face!==null && a.face!==undefined)
+        ? `<b>${(a.slot||0)+1}</b>${shortFace(a.face)}`
+        : "·";
+    g += `<button type="button" class="cellbtn${sel?" sel":""}${skipped?" off":""}"
+      data-cell="${k}" title="Row ${r+1}, column ${c+1}">${label}
+      ${F.rot[k]?`<i>${F.rot[k]}°</i>`:""}</button>`;
+  }
+  return g + `</div>`;
+}
+
 function panelFixture(){
   const F = doc.fixture, sh = sheetFaces(), fr = fieldRect();
   const over = fixtureOversize();
@@ -2983,7 +3076,7 @@ function panelFixture(){
     <div class="readout">
       <b>Bed area</b><span>${U.fmt(fr.w,2)} × ${U.fmt(fr.h,2)} ${U.label()}</span>
       <b>Cells</b><span>${Math.max(1,Math.round(F.rows))*Math.max(1,Math.round(F.cols))}</span>
-      <b>Usable</b><span>${sh.capacity}</span>
+      <b>Marks per load</b><span>${sh.capacity}</span>
       <b>Faces needed</b><span>${sh.total}</span>
       <b>Runs</b><span>${sh.batches}</span>
     </div>
@@ -3022,6 +3115,26 @@ function panelFixture(){
     </div>
   </div></section>`:""}
 
+  <section class="sec"><h3>Which face goes where</h3><div class="body">
+    <div class="row">${fSeg("Assignment","doc.fixture.manual",
+      [[false,"Automatic"],[true,"By pocket"]])}</div>
+    ${F.manual ? `
+      ${assignGrid()}
+      <p class="hint">Each pocket shows <b>lock slot</b> then face. Slot 1 and slot 2 are the first and
+        second lock of a load, so the pattern repeats for every run. Tap a pocket to change it below.</p>
+      <div class="btnrow split" style="margin-top:8px">
+        <button class="btn sm" data-act="asgcol">Face per column</button>
+        <button class="btn sm" data-act="asgrow">Face per row</button>
+      </div>
+      <div class="btnrow split" style="margin-top:6px">
+        <button class="btn sm ghost" data-act="asgseed">Match automatic</button>
+        <button class="btn sm ghost dngr" data-act="asgclear">Empty every pocket</button>
+      </div>`
+    : `<p class="hint" style="margin-top:0">Faces are laid out in the order set under Sheet layout, filling
+        pockets in the fill order above. Switch to <b>By pocket</b> to say exactly which face lands where —
+        useful when the fixture holds one lock face up and the next face down.</p>`}
+  </div></section>
+
   <section class="sec"><h3>Cell${sel?` <span class="tag">${sel[0]+1} × ${sel[1]+1}</span>`:""}</h3><div class="body">
     ${sel?`
       <div class="readout">
@@ -3030,6 +3143,16 @@ function panelFixture(){
         <b>In millimetres</b><span>${r3(selC.x*MM)}, ${r3(toBedY(selC.y)*MM)}</span>
         <b>Status</b><span>${doc.fixture.skipped[ui.fixSel]?"skipped":doc.fixture.moved[ui.fixSel]?"moved":"on pitch"}</span>
       </div>
+      ${F.manual ? `<div class="row c2">
+        <label class="fld"><span>Lock slot</span>
+          <select data-asg="slot">${Array.from({length:Math.max(1,Math.round(F.rows)*Math.round(F.cols))},(_,i)=>
+            `<option value="${i}"${((F.assign[ui.fixSel]||{}).slot||0)===i?" selected":""}>Lock ${i+1} of the load</option>`).join("")}</select></label>
+        <label class="fld"><span>Face</span>
+          <select data-asg="face">
+            <option value=""${(F.assign[ui.fixSel]||{}).face===undefined||(F.assign[ui.fixSel]||{}).face===null?" selected":""}>— leave empty —</option>
+            ${doc.faces.map((f,i)=>`<option value="${i}"${(F.assign[ui.fixSel]||{}).face===i?" selected":""}>${esc(f.name)}</option>`).join("")}
+          </select></label>
+      </div>` : ""}
       <div class="row" style="margin-top:8px"><label class="fld"><span>Rotation in the pocket</span>
         <div class="seg" data-cellrot>
           ${[0,90,180,270].map(a=>`<button type="button" data-v="${a}"
@@ -3369,6 +3492,20 @@ function bindPanel(root){
       renderRail(); drawStage();
     });
   });
+  root.querySelectorAll("[data-cell]").forEach(b=>b.addEventListener("click",()=>{
+    if(ui.stageMode!=="fixture") setStageMode("fixture");
+    ui.fixSel = b.dataset.cell;
+    drawStage(); renderRail(true);
+  }));
+  root.querySelectorAll("[data-asg]").forEach(sel=>sel.addEventListener("change",()=>{
+    if(!ui.fixSel) return;
+    const F = doc.fixture;
+    const cur = Object.assign({slot:0, face:null}, F.assign[ui.fixSel]||{});
+    if(sel.dataset.asg==="slot") cur.slot = parseInt(sel.value)||0;
+    else cur.face = sel.value==="" ? null : parseInt(sel.value);
+    F.assign[ui.fixSel] = cur;
+    fixtureChanged();
+  }));
   const cr = root.querySelector("[data-cellrot]");
   if(cr) cr.addEventListener("click", e=>{
     const b = e.target.closest("button[data-v]"); if(!b || !ui.fixSel) return;
@@ -3427,6 +3564,10 @@ async function afterEdit(path){
   if(path==="doc.laser.materialId"){ doc.laser.trim=0; doc.laser.manual=false; renderRail(); }
   if(path==="doc.textOut") renderRail(true);
   if(path==="doc.bedOrigin"){ drawStage(); renderRail(true); }
+  if(path==="doc.fixture.manual"){
+    if(doc.fixture.manual && !Object.keys(doc.fixture.assign||{}).length) seedAssignment();
+    fixtureChanged();
+  }
   if(path.startsWith("doc.machines")||path.startsWith("doc.materials")) renderRail();
   if(path.startsWith("doc.fixture")){
     doc.fixture.batch = clamp(doc.fixture.batch||0, 0, batchCount()-1);
@@ -3495,6 +3636,10 @@ async function action(a){
     case "fxsnapback": if(ui.fixSel) delete doc.fixture.moved[ui.fixSel]; fixtureChanged(); break;
     case "fxclearmoved": doc.fixture.moved = {}; fixtureChanged(); break;
     case "fxclearrot": doc.fixture.rot = {}; fixtureChanged(); break;
+    case "asgseed": seedAssignment(); fixtureChanged(); toast("Copied the automatic layout"); break;
+    case "asgcol": assignByColumn(); fixtureChanged(); toast("One face per column"); break;
+    case "asgrow": assignByRow(); fixtureChanged(); toast("One face per row"); break;
+    case "asgclear": doc.fixture.assign = {}; fixtureChanged(); break;
     case "fxflipodd": {
       const F = doc.fixture, rows = Math.max(1, Math.round(F.rows));
       for(let r=0;r<rows;r++) for(let c=0;c<Math.max(1,Math.round(F.cols));c++){
@@ -4028,12 +4173,12 @@ const FB_CDN = "https://www.gstatic.com/firebasejs/" + FB_VERSION;
    remember it in the browser. A Firebase web apiKey is an identifier, not a
    secret — access is controlled by your Firestore rules. */
 const FIREBASE_BUILTIN = {
-  apiKey: "AIzaSyB_XxddCEQX3X9yKsWMPOyhzPiPCNPRu_c",
-  authDomain: "markbench-e351d.firebaseapp.com",
-  projectId: "markbench-e351d",
-  appId: "1:1032442534462:web:9d0c949d7584495f4acf6f",
-  storageBucket: "markbench-e351d.firebasestorage.app",
-  messagingSenderId: "1032442534462",
+  apiKey: "",
+  authDomain: "",
+  projectId: "",
+  appId: "",
+  storageBucket: "",
+  messagingSenderId: "",
   workspace: "shop",
   authMode: "anonymous"        // "anonymous" | "google"
 };

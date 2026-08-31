@@ -245,6 +245,17 @@ pitch dimensioned between the first two.
 
 - Drag a lock to move that one off pitch; the rest of the array stays put.
 - Tap a lock to skip that pocket — broken clamp, missing fixture insert.
+- **Which face goes where.** Leave *Assignment* on Automatic and faces fill in
+  the order set under Sheet layout. Switch to **By pocket** and you get a
+  miniature of the bed: every pocket shows a lock slot and a face, and tapping
+  one lets you set both. *Face per column* and *Face per row* fill the whole
+  grid in one press; *Match automatic* copies the automatic layout as a
+  starting point.
+
+  A pocket's **slot** is which lock of a load it holds, so the pattern repeats
+  every run — set "column 1 marks side 1, column 2 marks side 2" once and it
+  holds for every batch of locks you feed it. Leave a pocket empty and nothing
+  is marked there.
 - Rotate a cell 90/180/270 when the fixture holds that lock the other way up.
   **Flip rows 2, 4, 6…** does alternating rows in one press. The artwork turns
   with the lock, so the fixture never has to change.
