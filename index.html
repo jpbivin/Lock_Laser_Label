@@ -586,6 +586,7 @@ input[type=color]{width:100%;height:30px;padding:2px;background:var(--chrome-2);
 
 <input type="file" id="fileImg" accept="image/*,.svg" hidden>
 <input type="file" id="fileJson" accept=".json,application/json" hidden>
+<input type="file" id="fileClb" accept=".clb,application/xml,text/xml" hidden>
 
 <script>
 /* ============================================================================
@@ -595,7 +596,7 @@ input[type=color]{width:100%;height:30px;padding:2px;background:var(--chrome-2);
    ========================================================================== */
 "use strict";
 
-const BUILD = "2026.08.28-b";
+const BUILD = "2026.09.01-b";
 const MM   = 25.4;
 const CAPR = 0.716;              // cap height / em for the sans faces we ship with
 const FONTS = ["Arial","Arial Black","Arial Narrow","Verdana","Tahoma",
@@ -655,10 +656,16 @@ function shapeEl(o){
 
 /* ------------------------------------------------------------- machines --- */
 const MACHINE_TEMPLATES = {
-  hl50e:{ name:"Haas HL-50E", watts:50, source:"q", lens:110, lenses:[110,150],
-          speedMax:4000, powerMax:100, freqMin:20, freqMax:80, freqDefault:40,
-          pulseMin:0, pulseMax:0, intervalDefault:0.02, minInterval:0.005,
-          notes:"Q-switched fiber. Pulse width is fixed; frequency is your heat control." },
+  hl50e:{ name:"Haas HL-50E (F160)", watts:50, source:"q", lens:110, lenses:[110,200],
+          speedMax:7000, powerMax:100, freqMin:20, freqMax:100, freqDefault:55,
+          pulseMin:0, pulseMax:0, intervalDefault:0.0508, minInterval:0.005,
+          notes:"Q-switched fibre, F160 lens: 110 x 110 mm field, 20-100 kHz, 7000 mm/s ceiling. "
+              + "Pulse width is fixed on this controller, so frequency is the heat control." },
+  hl50e290:{ name:"Haas HL-50E (F290)", watts:50, source:"q", lens:200, lenses:[110,200],
+          speedMax:7000, powerMax:100, freqMin:20, freqMax:80, freqDefault:55,
+          pulseMin:0, pulseMax:0, intervalDefault:0.0508, minInterval:0.005,
+          notes:"Same source with the F290 lens: 200 x 200 mm field but a larger spot and a lower "
+              + "80 kHz ceiling. Recipes proved on the F160 usually need more dose here." },
   fiber20:{ name:"20 W fiber (Q-switched)", watts:20, source:"q", lens:110, lenses:[110,150,175],
           speedMax:3000, powerMax:100, freqMin:20, freqMax:60, freqDefault:30,
           pulseMin:0, pulseMax:0, intervalDefault:0.02, minInterval:0.005,
@@ -686,6 +693,35 @@ function makeMachine(tmplKey){
 }
 
 /* ------------------------------------------------------------- materials --- */
+/* Measured entries from the HL-50E material library supplied with the machine.
+   Interval 0.0508 mm is 500 dpi and 0.0254 is 1000 dpi, which is what the
+   vendor works at — considerably coarser, and faster, than a generic guess. */
+const VENDOR_SEEDS = [
+  { id:"v_anod_text", name:"Anodized aluminium - text (HL-50E)", speed:2960, power:50, freq:55,
+    interval:0.0508, passes:1, fill:"scan", pulse:0, proven:true,
+    note:"From the machine's own library. Very fast; the anodising only needs ablating." },
+  { id:"v_alum_light", name:"Bare aluminium - light mark (HL-50E)", speed:1770, power:55, freq:55,
+    interval:0.0508, passes:1, fill:"scan", pulse:0, proven:true, note:"Machined aluminium, light contrast." },
+  { id:"v_alum_dark", name:"Bare aluminium - dark mark (HL-50E)", speed:130, power:55, freq:32.5,
+    interval:0.0508, passes:1, fill:"scan", pulse:0, proven:true,
+    note:"Slow and low frequency for a dark mark. Watch for heat on thin bodies." },
+  { id:"v_ss304_light", name:"304 stainless - light (HL-50E)", speed:840, power:30, freq:70,
+    interval:0.0254, passes:1, fill:"scan", pulse:0, proven:true, note:"1000 dpi interval." },
+  { id:"v_ss304_dark", name:"304 stainless - dark anneal (HL-50E)", speed:100, power:20, freq:100,
+    interval:0.0254, passes:1, fill:"scan", pulse:0, proven:true,
+    note:"Top of the frequency range, slow, low power. Classic anneal recipe." },
+  { id:"v_mild_text", name:"Mild steel - text (HL-50E)", speed:3070, power:100, freq:100,
+    interval:0.0508, passes:1, fill:"scan", pulse:0, proven:true, note:"Full power, very fast." },
+  { id:"v_brass", name:"Brass - light (HL-50E)", speed:580, power:25, freq:45,
+    interval:0.0254, passes:2, fill:"scan", pulse:0, proven:true, note:"Two passes at low power." },
+  { id:"v_castiron", name:"Cast iron - light (HL-50E)", speed:1770, power:32.5, freq:55,
+    interval:0.0381, passes:1, fill:"scan", pulse:0, proven:true, note:"" },
+  { id:"v_4130", name:"4130 steel - dark (HL-50E)", speed:130, power:55, freq:100,
+    interval:0.0509, passes:1, fill:"scan", pulse:0, proven:true, note:"" },
+  { id:"v_carbide", name:"Carbide (HL-50E)", speed:130, power:55, freq:100,
+    interval:0.0509, passes:1, fill:"scan", pulse:0, proven:true, note:"" }
+];
+
 const MATERIAL_SEEDS = [
   { id:"anodized", name:"Anodized aluminium — white mark", speed:1200, power:45, freq:40,
     interval:0.02, passes:1, fill:"scan", pulse:0, proven:false,
@@ -717,6 +753,9 @@ const MATERIAL_SEEDS = [
 ];
 function seedMaterials(machineId){
   return MATERIAL_SEEDS.map(m => Object.assign({}, m, {machineId:machineId||null}));
+}
+function vendorMaterials(machineId){
+  return VENDOR_SEEDS.map(m => Object.assign({}, m, {machineId:machineId||null}));
 }
 
 function defaultDoc(){
@@ -1443,10 +1482,14 @@ function exportSVG(){
 }
 
 /* ---------------------------------------------------- LightBurn serialiser --- */
-function lbCut(idx, name, p, isCut, output){
+function lbCut(idx, name, p, isCut, output, kind){
   const M = (typeof activeMachine==="function") ? activeMachine() : {source:"q"};
   const qp = M.source==="mopa" ? Math.round(p.pulse||M.pulseMin||2) : 200;
-  return `  <CutSetting type="${isCut?"Cut":"Scan"}">
+  const type = kind || (isCut ? "Cut" : "Scan");
+  const img = type==="Image"
+    ? `    <ditherMode Value="stucki"/>\n    <dpi Value="${Math.round(25.4/Math.max(0.001,p.interval))}"/>\n`
+    : "";
+  return `  <CutSetting type="${type}">
     <index Value="${idx}"/>
     <name Value="${esc(name)}"/>
     <maxPower Value="${p.power}"/>
@@ -1518,8 +1561,10 @@ function exportLBRN(){
   let s = `<?xml version="1.0" encoding="UTF-8"?>\n`
     + `<LightBurnProject AppVersion="1.7.00" DeviceName="${esc(activeMachine().name)}" FormatVersion="1" `
     + `MaterialHeight="0" MirrorX="False" MirrorY="False">\n`;
-  s += lbCut(0, activeMaterial().name.slice(0,30), p, doc.laser.fill==="cut", true);
-  s += lbCut(1, "Guide — no output", {power:10,speed:1000,freq:30,passes:1,interval:0.05}, true, false);
+  const hasRaster = sh.faces.some(f => facePrims2(f).some(q => q.t==="img" && q.bmp));
+  s += lbCut(0, activeMaterial().name.slice(0,30), p, doc.laser.fill==="cut", true,
+             (hasRaster && doc.lbImage!=="guide") ? "Image" : undefined);
+  s += lbCut(1, "Guide - no output", {power:10,speed:1000,freq:30,passes:1,interval:0.05}, true, false);
   sh.faces.forEach(f=>{
     s += `  <Shape Type="Group">\n    <XForm>1 0 0 1 0 0</XForm>\n    <Children>\n`;
     facePrims2(f).forEach(q=> s += primLbrn(q, f.ox, f.oy, H, "      "));
@@ -2620,6 +2665,154 @@ function countOutlinePoints(){
 }
 
 /* ============================================================================
+   MARKBENCH — LightBurn material libraries (.clb)
+
+   A .clb is the file behind LightBurn's Cut Library dock: materials, each with
+   named entries, each holding a CutSetting. Reading them means the numbers the
+   machine shipped with — or anything a colleague has proved — land straight in
+   the Material tab. Writing them means a recipe tuned here shows up in
+   LightBurn without retyping.
+
+   Speeds are mm/s and intervals mm in both formats; frequency is Hz in the file
+   and kHz in the app.
+   ========================================================================== */
+
+function clbVal(cs, name, dflt){
+  const e = cs.querySelector(":scope > " + name);
+  if(!e) return dflt;
+  const v = e.getAttribute("Value");
+  return v === null ? dflt : v;
+}
+
+/* --------------------------------------------------------------- import --- */
+function parseCLB(text){
+  const dom = new DOMParser().parseFromString(text, "application/xml");
+  if(dom.getElementsByTagName("parsererror").length) throw new Error("not readable as XML");
+  const root = dom.documentElement;
+  if(!/LightBurnLibrary/i.test(root.nodeName)) throw new Error("not a LightBurn library");
+
+  const M = activeMachine();
+  const out = [];
+  root.querySelectorAll("Material").forEach(mat=>{
+    const matName = mat.getAttribute("name") || "Material";
+    mat.querySelectorAll("Entry").forEach(entry=>{
+      const process = entry.getAttribute("NoThickTitle") || "";
+      const desc = entry.getAttribute("Desc") || "";
+      entry.querySelectorAll("CutSetting").forEach(cs=>{
+        const type = cs.getAttribute("type") || "Scan";
+        if(type === "Tool") return;                       // no output, nothing to keep
+        const speed = parseFloat(clbVal(cs,"speed", "0"));
+        const power = parseFloat(clbVal(cs,"maxPower", "0"));
+        if(!isFinite(speed) || speed <= 0) return;
+        const fHz = parseFloat(clbVal(cs,"frequency", ""));
+        const interval = parseFloat(clbVal(cs,"interval", String(M.intervalDefault||0.05)));
+        const passes = parseInt(clbVal(cs,"numPasses","1")) || 1;
+
+        /* A library we wrote ourselves stores the machine as the process, so
+           drop that segment on the way back in — otherwise a name grows a
+           little longer every export/import cycle. */
+        const machineNames = (doc.machines||[]).map(x=>x.name.toLowerCase());
+        const parts = [matName, process, desc]
+          .filter(Boolean)
+          .filter(x => !machineNames.includes(x.toLowerCase()))
+          .filter((v,i,a)=>a.indexOf(v)===i)
+          .filter(x => x.toLowerCase() !== matName.toLowerCase() || x === matName);
+        const label = (parts.length ? parts : [matName]).join(" - ").slice(0,70);
+        out.push({
+          id: uid("mat_"),
+          name: label,
+          machineId: doc.machineId,
+          speed: Math.round(speed),
+          power: Math.round(power*10)/10,
+          freq: isFinite(fHz) && fHz>0 ? Math.round(fHz/100)/10 : (M.freqDefault||30),
+          interval: Math.round(interval*1e4)/1e4,
+          passes,
+          pulse: 0,
+          fill: type === "Cut" ? "cut" : "scan",
+          proven: true,
+          note: (type === "Image" ? "Image layer in the library" : "")
+              + (isFinite(fHz) && fHz>0 ? "" : " · no frequency stored, using the machine default")
+        });
+      });
+    });
+  });
+  if(!out.length) throw new Error("no usable cut settings in that library");
+  return out;
+}
+
+async function importCLB(file){
+  const text = await file.text();
+  let mats;
+  try{ mats = parseCLB(text); }
+  catch(e){ toast("Couldn't read that library — " + e.message); return; }
+
+  /* keep it honest: anything above this machine's ceilings is flagged, not
+     silently clipped, because the recipe came from somewhere else */
+  const M = activeMachine();
+  let clipped = 0;
+  mats.forEach(m=>{
+    if(m.speed > M.speedMax || m.power > M.powerMax ||
+       m.freq > M.freqMax || m.freq < M.freqMin || m.interval < M.minInterval){
+      clipped++;
+      m.proven = false;
+      m.note = (m.note ? m.note + " · " : "") + "outside this machine's limits as imported";
+    }
+  });
+
+  const have = new Set(doc.materials.map(m=>m.name.toLowerCase()));
+  const fresh = mats.filter(m=>!have.has(m.name.toLowerCase()));
+  doc.materials.push(...fresh);
+  if(fresh.length) doc.laser.materialId = fresh[0].id;
+  doc.laser.trim = 0; doc.laser.manual = false;
+
+  renderRail(true); updateStatus(); saveLocal();
+  toast(fresh.length + " material" + (fresh.length===1?"":"s") + " imported"
+        + (mats.length-fresh.length ? ", " + (mats.length-fresh.length) + " already there" : "")
+        + (clipped ? " · " + clipped + " flagged" : ""));
+}
+
+/* --------------------------------------------------------------- export --- */
+function exportCLB(){
+  const M = activeMachine();
+  const mine = doc.materials.filter(m => !m.machineId || m.machineId === doc.machineId);
+  const byMaterial = {};
+  mine.forEach(m=>{
+    const parts = m.name.split(" - ");
+    const head = (parts.length > 1 ? parts[0] : m.name).slice(0,40) || "Material";
+    (byMaterial[head] = byMaterial[head] || []).push(m);
+  });
+
+  let s = `<?xml version="1.0" encoding="UTF-8"?>\n`
+    + `<LightBurnLibrary DisplayName="${esc(doc.name || "Markbench")} - ${esc(M.name)}">\n`;
+  Object.keys(byMaterial).forEach(head=>{
+    s += `    <Material name="${esc(head)}">\n`;
+    byMaterial[head].forEach(m=>{
+      const rest = m.name.split(" - ").slice(1).join(" - ") || m.name;
+      const isCut = m.fill === "cut";
+      s += `        <Entry Thickness="-1.0000" Desc="${esc(rest.slice(0,60))}"`
+        + ` NoThickTitle="${esc(M.name.slice(0,40))}">\n`
+        + `            <CutSetting type="${isCut ? "Cut" : "Scan"}">\n`
+        + `                <index Value="0"/>\n`
+        + `                <name Value="${esc(m.name.slice(0,60))}"/>\n`
+        + `                <minPower Value="0"/>\n`
+        + `                <maxPower Value="${r3(m.power)}"/>\n`
+        + `                <maxPower2 Value="${r3(m.power)}"/>\n`
+        + `                <speed Value="${r3(m.speed)}"/>\n`
+        + `                <frequency Value="${Math.round((m.freq||0)*1000)}"/>\n`
+        + `                <interval Value="${r3(m.interval)}"/>\n`
+        + `                <numPasses Value="${Math.round(m.passes||1)}"/>\n`
+        + `                <priority Value="0"/>\n`
+        + `                <tabCount Value="1"/>\n`
+        + `                <tabCountMax Value="1"/>\n`
+        + `            </CutSetting>\n`
+        + `        </Entry>\n`;
+    });
+    s += `    </Material>\n`;
+  });
+  return s + `</LightBurnLibrary>\n`;
+}
+
+/* ============================================================================
    MARKBENCH — panels, image pipeline, laser recipes, export, boot
    ========================================================================== */
 
@@ -3088,8 +3281,11 @@ function panelFixture(){
   </div></section>
 
   <section class="sec"><h3>Bed</h3><div class="body">
-    <div class="row">${fSel("Marking field","doc.fixture.field",[[110/MM,"110 mm lens — 110 × 110"],
-      [150/MM,"150 mm lens — 150 × 150"],[0,"No limit — size to the array"]],"num")}</div>
+    <div class="row">${fSel("Marking field","doc.fixture.field",[
+      [110/MM,"F160 lens — 110 × 110 mm"],
+      [150/MM,"150 mm lens — 150 × 150 mm"],
+      [200/MM,"F290 lens — 200 × 200 mm"],
+      [0,"No limit — size to the array"]],"num")}</div>
     <div class="row">${fSeg("Machine zero","doc.bedOrigin",
       [["bl","Bottom left"],["tl","Top left"]])}</div>
     <p class="hint" style="margin-top:0">Match this to your controller so the numbers here read the same
@@ -3243,7 +3439,8 @@ function panelMachine(){
     ${mopa?`<div class="row c2">${fNum("Pulse min ns","doc.machines."+idx+".pulseMin",1,1,2000)}
       ${fNum("Pulse max ns","doc.machines."+idx+".pulseMax",1,1,2000)}</div>`:""}
     <p class="hint">Every setting anywhere in the app is clamped to these, so a recipe proved on a 60 W
-      machine can't quietly ask this one for speeds it doesn't have.</p>
+      machine can't quietly ask this one for speeds it doesn't have. The HL-50E templates carry the
+      figures from the device profile: 7000 mm/s, 20–100 kHz on the F160 lens and 20–80 kHz on the F290.</p>
   </div></section>
 
   <section class="sec"><h3>Notes</h3><div class="body">
@@ -3333,6 +3530,19 @@ function panelMaterial(){
       ${fSel("Mode","doc.laser.fill",[["scan","Fill"],["cut","Line"]])}</div>
     ${mopa?`<div class="row">${fNum("Pulse width ns","doc.laser.pulse",1,M.pulseMin,M.pulseMax)}</div>`:""}
     <div class="btnrow"><button class="btn sm wide" data-act="testgrid">Download 4 × 4 parameter test grid</button></div>
+  </div></section>
+
+  <section class="sec"><h3>LightBurn library</h3><div class="body">
+    <div class="btnrow split">
+      <button class="btn sm" data-act="clbimport">Import .clb</button>
+      <button class="btn sm" data-act="clbexport">Export .clb</button>
+    </div>
+    <div class="btnrow" style="margin-top:6px">
+      <button class="btn sm ghost wide" data-act="vendorload">Load the HL-50E factory recipes</button>
+    </div>
+    <p class="hint">Import the material library that shipped with the machine, or any library a colleague
+      has proved, and every entry becomes a material here. Export sends your tuned recipes back the other
+      way, so they appear in LightBurn's Cut Library dock.</p>
     <p class="hint">The grid marks sixteen squares, each on its own LightBurn layer, sweeping speed against
       power around the current numbers. Run it on a scrap body, pick the square you like, type those in,
       then save them into the material so nobody repeats it.</p>
@@ -3762,7 +3972,29 @@ async function action(a){
     case "lighter": doc.laser.manual=false; doc.laser.trim=clamp(doc.laser.trim-1,-5,5); renderRail(); break;
     case "darker":  doc.laser.manual=false; doc.laser.trim=clamp(doc.laser.trim+1,-5,5); renderRail(); break;
     case "resettrim": doc.laser.manual=false; doc.laser.trim=0; syncManualToMaterial(); renderRail(); break;
-    case "testgrid": download("hl50e-test-grid.lbrn", testGrid(), "application/xml"); toast("Test grid saved"); break;
+    case "testgrid": {
+      const mn = activeMachine().name.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"");
+      download(mn + "-test-grid.lbrn", testGrid(), "application/xml"); toast("Test grid saved"); break;
+    }
+    case "clbimport": {
+      const f = $("fileClb"); f.value = "";
+      f.onchange = async ()=>{ if(f.files[0]) await importCLB(f.files[0]); };
+      f.click(); break;
+    }
+    case "clbexport": {
+      const name = (doc.name||"markbench").toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"");
+      download(name + "-materials.clb", exportCLB(), "application/xml");
+      toast("Library saved — load it from LightBurn's Cut Library dock"); break;
+    }
+    case "vendorload": {
+      const have = new Set(doc.materials.map(m=>m.id));
+      const add = vendorMaterials(doc.machineId).filter(m=>!have.has(m.id));
+      if(!add.length){ toast("Already loaded"); return; }
+      doc.materials.push(...add);
+      doc.laser.materialId = add[0].id; doc.laser.trim = 0; doc.laser.manual = false;
+      renderRail(true); updateStatus(); saveLocal();
+      toast(add.length + " factory recipes added"); break;
+    }
     case "exall": {
       const n = batchCount(), keep = doc.fixture.batch;
       await withBusy("Building "+n+" run files", ()=>{
@@ -3818,7 +4050,7 @@ function testGrid(){
   const cell=8, gap=2, lw=11, lh=6;
   const W = lw+4*(cell+gap), H = lh+4*(cell+gap);
   let s = `<?xml version="1.0" encoding="UTF-8"?>\n<LightBurnProject AppVersion="1.7.00" `
-    + `DeviceName="Haas HL-50E" FormatVersion="1" MaterialHeight="0" MirrorX="False" MirrorY="False">\n`;
+    + `DeviceName="${esc(activeMachine().name)}" FormatVersion="1" MaterialHeight="0" MirrorX="False" MirrorY="False">\n`;
   let i=0;
   for(let r=0;r<4;r++) for(let c=0;c<4;c++)
     s += lbCut(i++, `${sp[c]} mm/s · ${pw[r]}%`,
@@ -4195,12 +4427,20 @@ const FIREBASE_BUILTIN = {
   apiKey: "AIzaSyB_XxddCEQX3X9yKsWMPOyhzPiPCNPRu_c",
   authDomain: "markbench-e351d.firebaseapp.com",
   projectId: "markbench-e351d",
-  appId: "1:1032442534462:web:9d0c949d7584495f4acf6f",
   storageBucket: "markbench-e351d.firebasestorage.app",
   messagingSenderId: "1032442534462",
+  appId: "1:1032442534462:web:9d0c949d7584495f4acf6f",
   workspace: "shop",
   authMode: "anonymous"        // "anonymous" | "google"
 };
+
+/* Which fields the file owns outright. Everything here overrides whatever a
+   browser happens to have saved, so editing this block updates every machine
+   on the next load — no clearing local storage, no stale pasted configs. */
+const FIREBASE_FIXED = ["apiKey","authDomain","projectId","storageBucket","messagingSenderId","appId"];
+function builtinConfigured(){
+  return !!(FIREBASE_BUILTIN.apiKey && FIREBASE_BUILTIN.projectId && FIREBASE_BUILTIN.appId);
+}
 
 const CFG_KEY = "markbench.firebase";
 const FS_DOC_LIMIT = 1048487;
@@ -4217,6 +4457,8 @@ function cloudCfg(){
   let saved = null;
   try{ saved = JSON.parse(localStorage.getItem(CFG_KEY) || "null"); }catch(e){}
   const c = Object.assign({}, FIREBASE_BUILTIN, saved || {});
+  /* the committed project identity wins; workspace and sign-in stay per-machine */
+  FIREBASE_FIXED.forEach(k=>{ if(FIREBASE_BUILTIN[k]) c[k] = FIREBASE_BUILTIN[k]; });
   return c;
 }
 function cloudConfigured(c){ c = c || cloudCfg(); return !!(c.apiKey && c.projectId && c.appId); }
@@ -4535,6 +4777,31 @@ function designNameSection(){
 
 function panelCloud(){
   const c = cloudCfg();
+  if(builtinConfigured() && cloud.state !== "ready"){
+    return designNameSection() + `
+    <section class="sec"><h3>Shop library</h3><div class="body">
+      ${cloud.err?`<div class="callout bad">${esc(cloud.err)}</div>`:""}
+      <div class="readout">
+        <b>Project</b><span>${esc(c.projectId)}</span>
+        <b>Status</b><span>${cloud.state==="connecting"?"connecting…":cloud.state==="error"?"not connected":"offline"}</span>
+      </div>
+      <div class="row c2" style="margin-top:9px">
+        <label class="fld"><span>Workspace</span>
+          <input type="text" id="cfg_workspace" value="${esc(c.workspace||"shop")}" spellcheck="false"></label>
+        <label class="fld"><span>Sign-in</span>
+          <select id="cfgAuthMode">
+            <option value="anonymous"${c.authMode!=="google"?" selected":""}>Anonymous</option>
+            <option value="google"${c.authMode==="google"?" selected":""}>Google account</option>
+          </select></label>
+      </div>
+      <div class="btnrow" style="margin-top:8px">
+        <button class="btn pri wide" data-act="cloudsave">${cloud.state==="connecting"?"Connecting…":"Connect"}</button>
+      </div>
+      <p class="hint">This build ships with the project baked in, so there is nothing to paste. Change the
+        workspace to keep a separate library on this machine.</p>
+    </div></section>`;
+  }
+
   if(!cloudConfigured(c) || cloud.state==="off"){
     return designNameSection() + `
     <section class="sec"><h3>Connect a Firebase project</h3><div class="body">
@@ -4686,7 +4953,10 @@ async function cloudAction(a){
     case "cloudsave": {
       const keys = ["projectId","apiKey","appId","authDomain","workspace","messagingSenderId"];
       const c = cloudCfg();
-      keys.forEach(k=>{ const el = $("cfg_"+k); if(el) c[k] = el.value.trim(); });
+      keys.forEach(k=>{
+        if(builtinConfigured() && FIREBASE_FIXED.includes(k)) return;
+        const el = $("cfg_"+k); if(el) c[k] = el.value.trim();
+      });
       const am = $("cfgAuthMode"); if(am) c.authMode = am.value;
       if(!c.authDomain && c.projectId) c.authDomain = c.projectId + ".firebaseapp.com";
       if(!c.storageBucket && c.projectId) c.storageBucket = c.projectId + ".appspot.com";

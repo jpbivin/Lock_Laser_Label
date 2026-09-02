@@ -52,67 +52,47 @@ full-screen and remembers your work between sessions.
 
 ---
 
-## 2. Wire up Firebase (optional)
+## 2. Firebase
 
-Skip this entirely if you only want a local tool. Add it when you want the
-shop sharing one design library, one people roster, and one set of proven
-laser recipes.
-
-### Create the project
-
-1. <https://console.firebase.google.com> → **Add project**.
-2. **Build → Firestore Database → Create database → Production mode.**
-   Pick a region near you; `nam5` is fine for the US.
-3. **Build → Authentication → Get started → Sign-in method →** enable
-   **Anonymous**. (Or **Google** if you want named users — see below.)
-4. **Project settings → Your apps → Web (`</>`)** → register an app.
-   Copy the `firebaseConfig` object it shows you.
-
-### Publish the rules
-
-**Firestore Database → Rules →** paste the contents of `firestore.rules` →
-**Publish.** Do this before you connect, or every write is rejected.
-
-### Authorise the domain
-
-**Authentication → Settings → Authorized domains → Add domain** and enter your
-Pages host (for example `you.github.io`, or your Enterprise Pages hostname).
-
-### Connect the app
-
-Open the app, click the **Local** chip in the header (or **Cloud** in the right
-panel), paste **Project ID**, **API key** and **App ID**, and press
-**Connect**. There's a *Paste whole config* button that accepts the whole
-`firebaseConfig` object as-is.
-
-The config is stored in your browser. To connect everyone automatically
-instead, fill in `FIREBASE_BUILTIN` near the top of the `<script>` block in
-`index.html` and commit it:
+The project is already committed in `index.html` — search for
+`FIREBASE_BUILTIN`. Nothing to paste; the app connects on load.
 
 ```js
 const FIREBASE_BUILTIN = {
   apiKey: "AIza…",
-  authDomain: "your-project.firebaseapp.com",
-  projectId: "your-project",
-  appId: "1:123456789:web:abc123",
-  storageBucket: "your-project.appspot.com",
-  messagingSenderId: "123456789",
+  authDomain: "markbench-e351d.firebaseapp.com",
+  projectId: "markbench-e351d",
+  storageBucket: "markbench-e351d.firebasestorage.app",
+  messagingSenderId: "1032442534462",
+  appId: "1:…",
   workspace: "shop",
   authMode: "anonymous"
 };
 ```
 
-A Firebase web `apiKey` is an identifier, not a credential. It is meant to be
-public. Your Firestore rules are what actually protect the data — which is why
-publishing them properly matters more than hiding the key.
+Those six identity fields **override anything a browser has saved**, so editing
+this block updates every machine on its next load. `workspace` and `authMode`
+stay per-machine — change the workspace in the Cloud tab to keep a separate
+library on one PC without touching the file.
 
-### Workspaces
+A Firebase web `apiKey` is an identifier, not a credential; it is meant to be
+public. Your Firestore rules are what protect the data.
 
-Everything lives under `workspaces/<name>`. Change **Workspace** in the setup
-form to keep separate libraries — say `plant-1` and `plant-2` — inside one
-Firebase project.
+### Still to do once, in the Firebase console
 
----
+1. **Firestore Database → Create database → Production mode.**
+2. **Authentication → Sign-in method →** enable **Anonymous**.
+3. **Firestore → Rules →** paste `firestore.rules` → **Publish.** Until you do,
+   every read and write is rejected.
+4. **Authentication → Settings → Authorized domains →** add your Pages host.
+
+### A word on who can reach it
+
+With anonymous sign-in and the Option A rules, anyone who can load the page can
+read and write the shop library. That is fine behind an internal GitHub
+Enterprise Pages site. If this page is reachable from the public internet,
+switch to Option B in `firestore.rules` — Google sign-in restricted to your
+email domain — and set `authMode` to `"google"` above.
 
 ## 3. What lives in the database
 
@@ -245,17 +225,16 @@ pitch dimensioned between the first two.
 
 - Drag a lock to move that one off pitch; the rest of the array stays put.
 - Tap a lock to skip that pocket — broken clamp, missing fixture insert.
-- **Which face goes where.** Leave *Assignment* on Automatic and faces fill in
-  the order set under Sheet layout. Switch to **By pocket** and you get a
-  miniature of the bed: every pocket shows a lock slot and a face, and tapping
-  one lets you set both. *Face per column* and *Face per row* fill the whole
-  grid in one press; *Match automatic* copies the automatic layout as a
-  starting point.
+- **Which side goes in which pocket.** Leave *Assignment* on Automatic and
+  sides fill in the order set under Sheet layout. Switch to **By pocket** and
+  you get a grid matching your fixture, one button per pocket showing the side
+  number it marks. Tap to step to the next side, then to empty. There are
+  one-press fills for *All side 1*, *Side per column* and *Side per row*.
 
-  A pocket's **slot** is which lock of a load it holds, so the pattern repeats
-  every run — set "column 1 marks side 1, column 2 marks side 2" once and it
-  holds for every batch of locks you feed it. Leave a pocket empty and nothing
-  is marked there.
+  Pockets carrying the same side take locks in fill order, so a left column of
+  **1** and a right column of **2** gives each lock both its sides. Four pockets
+  all marked **1** means four locks a load, one side each.
+
 - Rotate a cell 90/180/270 when the fixture holds that lock the other way up.
   **Flip rows 2, 4, 6…** does alternating rows in one press. The artwork turns
   with the lock, so the fixture never has to change.
@@ -278,7 +257,10 @@ bottom-left (the usual fibre setup, and the default) or the top-left. It changes
 what the panel, ruler and status bar display — the exported file is written
 Y-up either way and does not change.
 
-**Machine** — a library of the machines you own. Name, wattage, source type,
+**Machine** — a library of the machines you own. The HL-50E templates carry the
+real figures from the device profile: 7000 mm/s ceiling, 20–100 kHz on the F160
+lens (110 × 110 mm field) and 20–80 kHz on the F290 (200 × 200 mm). Pulse width
+is not adjustable on this controller, so it isn't offered. Name, wattage, source type,
 lens field, and hard limits for speed, power, frequency and line interval.
 Every setting anywhere in the app is clamped to the active machine, so a recipe
 proved on a 60 W MOPA can't quietly ask a 50 W Q-switch for speeds it doesn't
@@ -288,6 +270,15 @@ machines get pulse width as a real parameter.
 **Material** — your recipe library. Each material stores speed, power,
 frequency, interval, passes, mode, pulse width, which machine it was proved on,
 and notes on what to watch for. Add materials, edit them, mark them proven.
+
+**Import .clb / Export .clb** reads and writes LightBurn material libraries.
+Import the library that shipped with the machine and every entry becomes a
+material here, converted properly — frequency from Hz to kHz, speeds and
+intervals as-is, image layers noted. Anything outside the active machine's
+limits arrives flagged and unproven rather than silently clipped. Export sends
+your tuned recipes back so they appear in LightBurn's Cut Library dock.
+**Load the HL-50E factory recipes** adds the vendor's proven settings without
+needing the file.
 
 The too-light / too-dark ladder trims the active recipe without touching what's
 stored; when the mark is right, press **Save trim into material** and the tuned
